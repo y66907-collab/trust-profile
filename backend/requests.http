@@ -1,0 +1,65 @@
+### Try the API from VS Code (REST Client extension). Run the server first.
+@base = http://localhost:8000
+
+### Catalog of sources
+GET {{base}}/sources
+
+### Create a person
+# @name person
+POST {{base}}/persons
+Content-Type: application/json
+
+{"display_name": "נועה לוי"}
+
+###
+@pid = {{person.response.body.id}}
+
+### Phone: start (dev mode returns dev_code)
+POST {{base}}/persons/{{pid}}/connect/id.phone/start
+Content-Type: application/json
+
+{"phone": "0521234567"}
+
+### Phone: complete (paste dev_code)
+POST {{base}}/persons/{{pid}}/connect/id.phone/complete
+Content-Type: application/json
+
+{"code": "000000"}
+
+### Bituach Leumi guided download (parser stub: send extracted fields)
+POST {{base}}/persons/{{pid}}/connect/work.btl/complete
+Content-Type: application/json
+
+{"extracted": {"periods": [{"employer": "אלפא", "months": 30}, {"employer": "בטא", "months": 42}]}}
+
+### Ask a previous landlord to confirm
+# @name referee
+POST {{base}}/persons/{{pid}}/referees
+Content-Type: application/json
+
+{"role": "landlord", "name": "דוד כהן", "contact": "0549999999", "city": "חיפה", "gush_helka": "6666-123"}
+
+### Referee opens the link
+GET {{base}}{{referee.response.body.link}}
+
+### Referee answers
+POST {{base}}{{referee.response.body.link}}
+Content-Type: application/json
+
+{"paid_on_time": 5, "property_condition": 4, "would_rent_again": true}
+
+### What is stored about me
+GET {{base}}/persons/{{pid}}/me
+
+### Create a share link for a landlord
+# @name share
+POST {{base}}/persons/{{pid}}/shares
+Content-Type: application/json
+
+{"context": "rental", "days": 7}
+
+### What the landlord sees
+GET {{base}}{{share.response.body.link}}
+
+### Audit log
+GET {{base}}/persons/{{pid}}/audit
