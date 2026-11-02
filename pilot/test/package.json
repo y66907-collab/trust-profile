@@ -1,0 +1,6 @@
+{
+  "name": "imtrustme-pilot-e2e",
+  "private": true,
+  "description": "End-to-end test of the pilot page with Google sign-in and Gmail mocked",
+  "dependencies": { "pyodide": "0.29.3" }
+}

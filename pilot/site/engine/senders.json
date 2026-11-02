@@ -1,0 +1,287 @@
+{
+ "bezeq.co.il": {
+  "org": "bezeq",
+  "org_he": "בזק",
+  "sector": "telecom"
+ },
+ "019mobile.co.il": {
+  "org": "019",
+  "org_he": "019 מובייל",
+  "sector": "telecom"
+ },
+ "partner.co.il": {
+  "org": "partner",
+  "org_he": "פרטנר",
+  "sector": "telecom"
+ },
+ "partner.net.il": {
+  "org": "partner",
+  "org_he": "פרטנר",
+  "sector": "telecom"
+ },
+ "cellcominv.co.il": {
+  "org": "cellcom",
+  "org_he": "סלקום",
+  "sector": "telecom"
+ },
+ "hot-info.net.il": {
+  "org": "hot",
+  "org_he": "הוט",
+  "sector": "telecom"
+ },
+ "sender.netfree.link": {
+  "org": "netfree",
+  "org_he": "נטפרי",
+  "sector": "telecom"
+ },
+ "iec.co.il": {
+  "org": "iec",
+  "org_he": "חברת החשמל",
+  "sector": "utility"
+ },
+ "dorgas.co.il": {
+  "org": "doralon_gas",
+  "org_he": "דור אלון גז",
+  "sector": "utility"
+ },
+ "gas-invoice.com": {
+  "org": "gas_supplier",
+  "org_he": "ספק הגז",
+  "sector": "utility"
+ },
+ "10ten.co.il": {
+  "org": "ten",
+  "org_he": "טן דלק",
+  "sector": "fuel"
+ },
+ "mail.anthropic.com": {
+  "org": "anthropic",
+  "org_he": "Anthropic",
+  "sector": "software"
+ },
+ "supabase.com": {
+  "org": "supabase",
+  "org_he": "Supabase",
+  "sector": "software"
+ },
+ "spotify.com": {
+  "org": "spotify",
+  "org_he": "Spotify",
+  "sector": "subscription"
+ },
+ "harel-group.co.il": {
+  "org": "harel",
+  "org_he": "הראל",
+  "sector": "insurance"
+ },
+ "harel-ins.co.il": {
+  "org": "harel",
+  "org_he": "הראל",
+  "sector": "insurance"
+ },
+ "fnx.co.il": {
+  "org": "phoenix",
+  "org_he": "הפניקס",
+  "sector": "insurance"
+ },
+ "migdal.co.il": {
+  "org": "migdal",
+  "org_he": "מגדל",
+  "sector": "insurance"
+ },
+ "clal-ins.co.il": {
+  "org": "clal",
+  "org_he": "כלל",
+  "sector": "insurance"
+ },
+ "lbr.co.il": {
+  "org": "lbr",
+  "org_he": "סוכנות הביטוח (lbr)",
+  "sector": "insurance"
+ },
+ "tgeg.co.il": {
+  "org": "tgeg",
+  "org_he": "סוכן הביטוח (tgeg)",
+  "sector": "insurance"
+ },
+ "mof.gov.il": {
+  "org": "cma",
+  "org_he": "רשות שוק ההון",
+  "sector": "government"
+ },
+ "mot.gov.il": {
+  "org": "mot",
+  "org_he": "משרד התחבורה",
+  "sector": "government"
+ },
+ "ecom.gov.il": {
+  "org": "gov_pay",
+  "org_he": "שירות התשלומים הממשלתי",
+  "sector": "government"
+ },
+ "nioi.gov.il": {
+  "org": "btl",
+  "org_he": "ביטוח לאומי",
+  "sector": "government"
+ },
+ "btl.gov.il": {
+  "org": "btl",
+  "org_he": "ביטוח לאומי",
+  "sector": "government"
+ },
+ "taxes.gov.il": {
+  "org": "ita",
+  "org_he": "רשות המסים",
+  "sector": "government"
+ },
+ "moc.gov.il": {
+  "org": "moc",
+  "org_he": "משרד התקשורת",
+  "sector": "government"
+ },
+ "nogamy.com": {
+  "org": "nogamy",
+  "org_he": "נוגמי",
+  "sector": "employer"
+ },
+ "meuhedet.co.il": {
+  "org": "meuhedet",
+  "org_he": "מאוחדת",
+  "sector": "health"
+ },
+ "clalit.org.il": {
+  "org": "clalit",
+  "org_he": "כללית",
+  "sector": "health"
+ },
+ "rivhit.co.il": {
+  "org": "rivhit",
+  "org_he": "ריווחית",
+  "sector": "platform"
+ },
+ "sumit.co.il": {
+  "org": "sumit",
+  "org_he": "סאמיט",
+  "sector": "platform"
+ },
+ "tranzila.com": {
+  "org": "tranzila",
+  "org_he": "טרנזילה",
+  "sector": "platform"
+ },
+ "payplus.co.il": {
+  "org": "payplus",
+  "org_he": "פיי פלוס",
+  "sector": "platform"
+ },
+ "ezcount.co.il": {
+  "org": "ezcount",
+  "org_he": "איזיקאונט",
+  "sector": "platform"
+ },
+ "paypal.co.il": {
+  "org": "paypal",
+  "org_he": "PayPal",
+  "sector": "platform"
+ },
+ "stripe.com": {
+  "org": "stripe",
+  "org_he": "Stripe",
+  "sector": "platform"
+ },
+ "email.i-b.co.il": {
+  "org": "ib",
+  "org_he": "IB תקשורת",
+  "sector": "telecom"
+ },
+ "cellcom.co.il": {
+  "org": "cellcom",
+  "org_he": "סלקום",
+  "sector": "telecom"
+ },
+ "max-finance.co.il": {
+  "org": "max",
+  "org_he": "מקס (כרטיס אשראי)",
+  "sector": "finance"
+ },
+ "isracard.co.il": {
+  "org": "isracard",
+  "org_he": "ישראכרט",
+  "sector": "finance"
+ },
+ "openai.com": {
+  "org": "openai",
+  "org_he": "OpenAI",
+  "sector": "software"
+ },
+ "anthropic.com": {
+  "org": "anthropic",
+  "org_he": "Anthropic",
+  "sector": "software"
+ },
+ "netflix.com": {
+  "org": "netflix",
+  "org_he": "Netflix",
+  "sector": "subscription"
+ },
+ "menora.co.il": {
+  "org": "menora",
+  "org_he": "מנורה מבטחים",
+  "sector": "insurance"
+ },
+ "ayalon-ins.co.il": {
+  "org": "ayalon",
+  "org_he": "איילון",
+  "sector": "insurance"
+ },
+ "email-migdal.co.il": {
+  "org": "migdal",
+  "org_he": "מגדל",
+  "sector": "insurance"
+ },
+ "outbox.co.il": {
+  "org": "outbox",
+  "org_he": "אאוטבוקס",
+  "sector": "platform"
+ },
+ "ypay.co.il": {
+  "org": "ypay",
+  "org_he": "YPay",
+  "sector": "platform"
+ },
+ "linet.org.il": {
+  "org": "linet",
+  "org_he": "לינט",
+  "sector": "platform"
+ },
+ "icount.co.il": {
+  "org": "icount",
+  "org_he": "iCount",
+  "sector": "platform"
+ },
+ "meshulam.co.il": {
+  "org": "meshulam",
+  "org_he": "משולם",
+  "sector": "platform"
+ },
+ "cardcom.co.il": {
+  "org": "cardcom",
+  "org_he": "קארדקום",
+  "sector": "platform"
+ },
+ "gov.il": {
+  "org": "gov_other",
+  "org_he": "שירותי ממשלה אישיים",
+  "sector": "personal_services"
+ },
+ "maccabi4u.co.il": {
+  "org": "maccabi4u",
+  "org_he": "מכבי",
+  "sector": "health"
+ },
+ "leumit.co.il": {
+  "org": "leumit",
+  "org_he": "לאומית",
+  "sector": "health"
+ }
+}

@@ -1,0 +1,7 @@
+# real mail envelopes and outputs never enter the repo
+test/rows.json
+test/shots/
+test/node_modules/
+**/__pycache__/
+*.xlsx
+imtrustme-feedback-*.json

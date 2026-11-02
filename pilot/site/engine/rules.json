@@ -1,0 +1,132 @@
+{
+ "version": "2026-11-02.4",
+ "event_types": {
+  "bill_issued": {
+   "family": "routine",
+   "level": 0,
+   "he": "חשבון / חשבונית תקופתית"
+  },
+  "receipt": {
+   "family": "routine",
+   "level": 0,
+   "he": "קבלה / אישור תשלום",
+   "closes": true
+  },
+  "payment_reminder": {
+   "family": "issue",
+   "level": 1,
+   "he": "תזכורת תשלום"
+  },
+  "payment_failed": {
+   "family": "issue",
+   "level": 2,
+   "he": "חיוב שנכשל"
+  },
+  "collection_notice": {
+   "family": "issue",
+   "level": 3,
+   "he": "התראת גבייה"
+  },
+  "legal_notice": {
+   "family": "issue",
+   "level": 4,
+   "he": "הליך משפטי / הוצאה לפועל"
+  },
+  "regulator_case": {
+   "family": "case",
+   "level": 0,
+   "he": "תיק מול רגולטור / רשות"
+  },
+  "payslip": {
+   "family": "employment",
+   "level": 0,
+   "he": "תלוש שכר"
+  }
+ },
+ "excluded_sectors": {
+  "health": {
+   "he": "בריאות",
+   "why": "מידע רפואי"
+  },
+  "donations": {
+   "he": "תרומות",
+   "why": "חושף דת והשתייכות"
+  },
+  "community": {
+   "he": "קהילה ומוסדות",
+   "why": "חושף השתייכות"
+  },
+  "personal_services": {
+   "he": "שירותי ממשלה אישיים",
+   "why": "לידה, מעונות, דרכון: חושף מצב משפחתי. רק משרדים ספציפיים מותרים"
+  }
+ },
+ "episode_gap_days": 60,
+ "resolve_within_days": 120,
+ "quiet_after_days": 120,
+ "outgoing_window_pad_days": 14,
+ "relationship_active_days": 75,
+ "materiality": {
+  "relationship_min_months": 6,
+  "issue_min_level": 2,
+  "issue_min_events": 3,
+  "resolved_issue_max_age_months": 24
+ },
+ "platform_sectors": [
+  "platform"
+ ],
+ "minor_issue": {
+  "_comment": "An issue is minor when all hold. Amounts are unknown (no bodies), so minor is judged by escalation and how fast it was settled.",
+  "max_level": 2,
+  "max_events": 2,
+  "max_resolve_days": 14,
+  "must_be_resolved": true
+ },
+ "retention": {
+  "report_valid_days": 90,
+  "profile_expiry_years": 3
+ },
+ "signals": {
+  "bank_alerts": {
+   "query": "חשבון מוגבל | שיק חזר | חריגה ממסגרת | הגבלת חשבון (3y, all senders)",
+   "subject": "חשבון מוגבל|שיקי?ם? חוזר|חריגה ממסגרת|הגבלת חשבון|התראה לפני הגבלה"
+  },
+  "bank_relation": {
+   "query": "from bank domains (3y)",
+   "subject": "הודעה על קבלת דואר חדש בחשבונך",
+   "domain": "fibi.co.il",
+   "org_he": "הבנק הבינלאומי"
+  },
+  "bit_transfers": {
+   "query": "from bit / paybox / pepper (3y)",
+   "subject": "העברת|העברה|קיבלת|שלחת|תשלום",
+   "domain": "bitpay.co.il"
+  },
+  "address_change": {
+   "query": "subject: שינוי כתובת / מעבר דירה (3y)",
+   "subject": "שינוי כתובת מגורים",
+   "domain": "gov.il",
+   "_comment": "narrow exception to the gov.il block: this template only"
+  },
+  "service_end": {
+   "query": "subject: הפסקת שירות / סגירת חשבון (3y)",
+   "subject": "הפסקת שירות|סגירת חשבון|ניתוק"
+  },
+  "lease": {
+   "query": "subject: חוזה / הסכם שכירות, שכר דירה (6y): 0 threads",
+   "subject": "חוזה ה?שכירות|הסכם ה?שכירות|שכר ה?דירה"
+  },
+  "credit_report": {
+   "query": "subject: נתוני אשראי, BDI, דוח אשראי (6y)",
+   "subject": "נתוני אשראי|דו\"?ח אשראי|BDI|דירוג אשראי"
+  },
+  "legal": {
+   "query": "subject: תביעה, בית משפט, הוצאה לפועל, רשות האכיפה, עיקול, chargeback (3y). An insurance or benefits claim is not a legal case",
+   "subject": "כתב תביעה|תביעה קטנה|בית ה?משפט|הוצאה לפועל|רשות האכיפה|עיקול|chargeback|הכחשת עסקה"
+  },
+  "loan": {
+   "query": "הסכם הלוואה (6y)",
+   "subject": "הסכם הלוואה"
+  }
+ }
+}

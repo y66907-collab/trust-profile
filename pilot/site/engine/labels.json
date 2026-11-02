@@ -1,0 +1,163 @@
+[
+ {
+  "domain": "bezeq.co.il",
+  "match": "החשבונית החודשית שלך",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "bezeq.co.il",
+  "match": "חיובים בגין שירותי בזק",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "019mobile.co.il",
+  "match": "החשבונית שלך",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "partner.net.il",
+  "match": "החשבונית החודשית שלך",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "cellcominv.co.il",
+  "match": "חשבונית סלקום",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "hot-info.net.il",
+  "match": "פירוט החשבון החודשי",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "sender.netfree.link",
+  "match": "הנפקנו לכם קבלה",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "iec.co.il",
+  "match": "קבלה לחשבון חוזה",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "iec.co.il",
+  "match": "עבור תשלום קבלה",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "iec.co.il",
+  "match": "מספר חשבון חוזה",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "dorgas.co.il",
+  "match": "חשבונית חודשית",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "dorgas.co.il",
+  "match": "קבלה",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "gas-invoice.com",
+  "match": "חשבונית גז",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "10ten.co.il",
+  "match": "חשבונית חודשית",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "mail.anthropic.com",
+  "match": "your receipt from anthropic",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "supabase.com",
+  "match": "new invoice",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "supabase.com",
+  "match": "payment received",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "spotify.com",
+  "match": "אי אפשר לעבד את התשלום",
+  "event_type": "payment_failed"
+ },
+ {
+  "domain": "spotify.com",
+  "match": "עליכם לעדכן את פרטי התשלום",
+  "event_type": "payment_reminder"
+ },
+ {
+  "domain": "spotify.com",
+  "match": "קבלה של spotify",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "ecom.gov.il",
+  "match": "שירות התשלומים הממשלתי",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "mof.gov.il",
+  "match": "פנייתך ליחידה לפניות הציבור",
+  "event_type": "regulator_case"
+ },
+ {
+  "domain": "lbr.co.il",
+  "match": "במענה לפניית פיקוח",
+  "event_type": "regulator_case"
+ },
+ {
+  "domain": "mot.gov.il",
+  "match": "ערעור על דרישה לתשלום",
+  "event_type": "regulator_case"
+ },
+ {
+  "domain": "email.i-b.co.il",
+  "match": "מסמך הנהלת חשבונות",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "email.i-b.co.il",
+  "match": "סרוב בכרטיס האשראי",
+  "event_type": "payment_failed"
+ },
+ {
+  "domain": "max-finance.co.il",
+  "match": "סיכום פירוט החיובים שלך",
+  "event_type": "bill_issued"
+ },
+ {
+  "domain": "openai.com",
+  "match": "account has been funded",
+  "event_type": "receipt"
+ },
+ {
+  "domain": "outbox.co.il",
+  "match": "מי קרית גת",
+  "event_type": "bill_issued",
+  "org": "mei_kg",
+  "org_he": "מי קרית גת (מים)",
+  "city": "קרית גת"
+ },
+ {
+  "domain": "outbox.co.il",
+  "match": "ממי קרית גת",
+  "event_type": "bill_issued",
+  "org": "mei_kg",
+  "org_he": "מי קרית גת (מים)",
+  "city": "קרית גת"
+ },
+ {
+  "domain": "nogamy.com",
+  "match": "תלוש",
+  "event_type": "payslip"
+ }
+]
