@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>imtrustme · פיילוט</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e9aa0'/%3E%3Ctext x='16' y='22' font-family='Arial' font-weight='700' font-size='17' fill='white' text-anchor='middle'%3Eim%3C/text%3E%3C/svg%3E">
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-env" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5 12 13l8.5-6.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12h12"/><path d="m11 6 6 6-6 6"/><path d="M20 4v16"/></symbol>
+  <symbol id="i-unlink" viewBox="0 0 24 24"><path d="M9 15 15 9"/><path d="M10.5 6.5 12 5a4 4 0 0 1 6 6l-1.5 1.5"/><path d="M13.5 17.5 12 19a4 4 0 0 1-6-6l1.5-1.5"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="top-in">
+    <a class="mark" href="#" aria-label="imtrustme">im<b>trust</b>me</a>
+    <ol class="steps" id="steps" aria-label="התקדמות"><li></li><li></li><li></li><li></li><li></li><li></li></ol>
+    <span class="pilot-tag">פיילוט</span>
+  </div>
+</header>
+
+<main>
+  <!-- 1. welcome -->
+  <section class="screen on" id="s-welcome" data-step="1">
+    <h1>מה תיבת המייל שלך מספרת עליך</h1>
+    <p class="lead">בערך עשר דקות, ומקבלים פרופיל שנבנה מתיבת ה-Gmail, בדיוק כמו שמשכיר דירה היה רואה אותו. את/ה קורא/ת אותו ראשון/ה, ומחליט/ה מה מוצג.</p>
+    <div class="card">
+      <ul class="facts">
+        <li><svg class="ico"><use href="#i-env"/></svg><div><b>נקראת רק המעטפה.</b> שולח, נמען, נושא ותאריך. שום מייל לא נפתח.</div></li>
+        <li><svg class="ico"><use href="#i-lock"/></svg><div><b>הכל רץ בדפדפן שלך.</b> אין שרת. שום מייל לא יוצא מהמחשב.</div></li>
+        <li><svg class="ico"><use href="#i-shield"/></svg><div><b>מה שפרטי נשאר בחוץ.</b> מיילים מאנשים פרטיים, בריאות, תרומות וקהילה לא נכנסים לפרופיל.</div></li>
+        <li><svg class="ico"><use href="#i-unlink"/></svg><div><b>הגישה מתבטלת לבד.</b> מיד כשהקריאה נגמרת.</div></li>
+        <li><svg class="ico"><use href="#i-send"/></svg><div><b>המשוב רק באישורך.</b> בסוף רואים בדיוק מה יוצא, מורידים מה שרוצים, ושולחים בעצמך.</div></li>
+      </ul>
+    </div>
+    <div class="actions"><button class="btn" data-go="s-details">להתחיל</button></div>
+  </section>
+
+  <!-- 2. details -->
+  <section class="screen" id="s-details" data-step="2">
+    <h1>איך קוראים לך?</h1>
+    <p class="lead">השם עוזר למנוע לזהות חשבונות על שמך. הוא לא נשמר בשום מקום.</p>
+    <div class="card">
+      <div class="field">
+        <label class="f" for="name-he">שם מלא בעברית</label>
+        <input class="input" id="name-he" autocomplete="name" placeholder="כמו שמופיע על חשבון החשמל">
+        <div class="err" id="name-err" hidden>צריך שם פרטי ושם משפחה</div>
+      </div>
+      <div class="field">
+        <label class="f" for="name-en">שם באנגלית <span class="small">(לא חובה)</span></label>
+        <input class="input" id="name-en" dir="ltr" autocomplete="off" placeholder="Dana Cohen">
+      </div>
+      <label class="check"><input type="checkbox" id="has-hh"><span>יש חשבונות משותפים שרשומים על שם בן/בת זוג או בן/בת משפחה</span></label>
+      <div class="field" id="hh-wrap" hidden style="margin-top:14px">
+        <label class="f" for="hh-name">השם שלו/ה, כמו שמופיע על החשבונות</label>
+        <input class="input" id="hh-name" autocomplete="off">
+        <div class="hint">חשבון על השם הזה יסומן "חשבון משותף לפי הצהרתך".</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="details-next">המשך</button>
+      <button class="btn ghost" data-go="s-welcome">חזרה</button>
+    </div>
+  </section>
+
+  <!-- 3. connect + read -->
+  <section class="screen" id="s-connect" data-step="3">
+    <div id="connect-pre">
+      <h1>חיבור Gmail</h1>
+      <p class="lead">שלוש לחיצות בחלון של Google.</p>
+      <div class="card">
+        <ol class="howto">
+          <li><div>ייפתח חלון של Google. בוחרים את החשבון.</div></li>
+          <li><div>תופיע ההודעה <span class="en">Google hasn't verified this app</span>. זה צפוי בפיילוט. לוחצים <span class="en">Advanced</span> ואז <span class="en">Go to imtrustme</span>.</div></li>
+          <li><div>מאשרים הרשאה אחת: <span class="en">View your email message metadata</span>. זה רק המעטפות, בלי תוכן.</div></li>
+        </ol>
+      </div>
+      <div class="actions">
+        <button class="btn google" id="connect"><svg class="ico" style="margin:0"><use href="#i-env"/></svg>חיבור Gmail</button>
+        <button class="btn ghost" data-go="s-details">חזרה</button>
+      </div>
+      <div class="err" id="connect-err" hidden></div>
+    </div>
+    <div id="connect-run" hidden>
+      <h1>קוראים את המעטפות</h1>
+      <p class="lead" id="run-lead">אפשר לעזוב את הלשונית פתוחה ולעשות דברים אחרים.</p>
+      <div class="card">
+        <ul class="stages" id="stages">
+          <li data-k="list"><span class="dot"></span><span>סופרים מיילים</span><span class="small" data-n></span></li>
+          <li data-k="read"><span class="dot"></span><span>קוראים מעטפות של <span id="yrs"></span> שנים</span><span class="small" data-n></span></li>
+          <li data-k="engine"><span class="dot"></span><span>בונים את הפרופיל</span><span class="small" data-n></span></li>
+          <li data-k="revoke"><span class="dot"></span><span>מבטלים את הגישה ל-Gmail</span><span class="small" data-n></span></li>
+        </ul>
+        <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+        <p class="small" id="eta" style="margin:10px 0 0"></p>
+      </div>
+      <div class="err" id="run-err" hidden></div>
+    </div>
+  </section>
+
+  <!-- 4. report -->
+  <section class="screen" id="s-report" data-step="4">
+    <div class="card soft no-print">
+      <b>זה הדוח, כפי שמשכיר היה רואה אותו.</b> בכל שורה אפשר להסתיר, להוסיף תגובה, או לסמן שמשהו לא נכון.
+      המשכיר רואה שהוסתרה שורה, אבל לא מה היה בה.
+    </div>
+    <div class="rep-head">
+      <div><div class="who" id="rep-name"></div><div class="meta">פרופיל לשכירת דירה · מתוך תיבת Gmail</div></div>
+      <div class="meta" id="rep-meta"></div>
+    </div>
+    <div id="rep-groups"></div>
+    <div class="card" id="rep-minor" hidden>
+      <h2>אירועי תשלום זניחים</h2>
+      <p class="small" style="margin-top:0">חיוב שנכשל ונסגר תוך שבועיים. מופיע בנפרד כדי שלא יושווה לבעיה מהותית.</p>
+      <ul class="minor" id="minor-list"></ul>
+    </div>
+    <div class="card">
+      <h2>לא נבדק בפיילוט</h2>
+      <ul class="minor" id="notchecked"></ul>
+    </div>
+    <p class="small" id="rep-foot"></p>
+    <div class="sticky no-print"><div class="in">
+      <button class="btn ghost" id="print">שמירה כ-PDF</button>
+      <button class="btn" data-go="s-questions">המשך: כמה שאלות</button>
+    </div></div>
+  </section>
+
+  <!-- 5. questions -->
+  <section class="screen" id="s-questions" data-step="5">
+    <h1>חמש שאלות קצרות</h1>
+    <p class="lead">אין תשובות נכונות. כל מה שנוח לך.</p>
+    <div class="card">
+      <div class="field"><label class="f" for="q-feel">מה הרגשת כשקראת את הפרופיל?</label><textarea id="q-feel"></textarea></div>
+      <div class="field"><div class="f">הראית אותו למישהו?</div>
+        <div class="choices" data-q="q-shown">
+          <label><input type="radio" name="q-shown" value="כן">כן</label>
+          <label><input type="radio" name="q-shown" value="עוד לא, אבל ארצה">עוד לא, אבל ארצה</label>
+          <label><input type="radio" name="q-shown" value="לא">לא</label>
+        </div></div>
+      <div class="field"><div class="f">היית שולח/ת אותו למשכיר?</div>
+        <div class="choices" data-q="q-send">
+          <label><input type="radio" name="q-send" value="כן, כמו שהוא">כן, כמו שהוא</label>
+          <label><input type="radio" name="q-send" value="כן, אחרי שאסתיר שורות">כן, אחרי שאסתיר שורות</label>
+          <label><input type="radio" name="q-send" value="לא">לא</label>
+        </div>
+        <textarea id="q-send-why" placeholder="מה היית מסתיר/ה, או למה לא" style="margin-top:10px"></textarea></div>
+      <div class="field"><label class="f" for="q-fear">מה הלחיץ אותך כשלחצת "חיבור Gmail"?</label><textarea id="q-fear"></textarea></div>
+      <div class="field"><div class="f">היית משלם/ת על זה כדי לקבל דירה מהר יותר?</div>
+        <div class="choices" data-q="q-pay">
+          <label><input type="radio" name="q-pay" value="לא">לא</label>
+          <label><input type="radio" name="q-pay" value="עד 30 ש״ח">עד 30 ש״ח</label>
+          <label><input type="radio" name="q-pay" value="30 עד 80 ש״ח">30 עד 80 ש״ח</label>
+          <label><input type="radio" name="q-pay" value="יותר">יותר</label>
+        </div></div>
+      <div class="field" style="margin-bottom:0"><label class="f" for="q-ux">משהו היה מבלבל או לא נוח? <span class="small">(לא חובה)</span></label><textarea id="q-ux"></textarea></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="to-feedback">לראות מה יישלח</button>
+      <button class="btn ghost" data-go="s-report">חזרה לדוח</button>
+    </div>
+  </section>
+
+  <!-- 6. feedback preview -->
+  <section class="screen" id="s-feedback" data-step="6">
+    <h1>זה מה שיישלח ל<span class="to-name"></span></h1>
+    <p class="lead">שום דבר לא נשלח לבד. מורידים כל פרט שלא רוצים, ואז נוצר קובץ שאת/ה שולח/ת בעצמך.</p>
+    <div class="card"><h2>התשובות שלך</h2><div id="fb-answers"></div></div>
+    <div class="card"><h2>מה סימנת בדוח</h2><div id="fb-marks"></div></div>
+    <div class="card"><h2>מספרים על הריצה</h2><p class="small" style="margin-top:0">רק ספירות. בלי שמות, בלי נושאים.</p><div id="fb-stats"></div></div>
+    <div class="card">
+      <h2>שולחים שהמנוע עוד לא מכיר</h2>
+      <p class="small" style="margin-top:0">כדי ללמד את המנוע: כתובת השולח ותבנית הנושא, בלי מספרים ובלי שמך. שולחים של בריאות, תרומות, קהילה וילדים כבר הוצאו.</p>
+      <div class="actions" style="margin:0 0 8px"><button class="link" id="fb-none">להוריד את כולם</button><button class="link" id="fb-all">לסמן את כולם</button></div>
+      <div class="scroll" id="fb-unknown"></div>
+    </div>
+    <div class="card">
+      <div class="field" style="margin:0"><label class="f" for="fb-from">ממי המשוב</label><input class="input" id="fb-from"><div class="hint">כדי ש<span class="to-name"></span> תדע של מי הקובץ.</div></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="fb-make">יצירת קובץ המשוב</button>
+      <button class="btn ghost" data-go="s-questions">חזרה</button>
+    </div>
+  </section>
+
+  <!-- 7. done -->
+  <section class="screen" id="s-done" data-step="6">
+    <h1>תודה</h1>
+    <p class="lead">הקובץ <span class="mono" id="done-file"></span> נשמר. שלח/י אותו ל<span class="to-name"></span> בוואטסאפ או במייל.</p>
+    <div class="card">
+      <ul class="facts">
+        <li><svg class="ico"><use href="#i-unlink"/></svg><div>הגישה ל-Gmail בוטלה. אפשר לוודא ב-<a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">הגדרות החשבון של Google</a>.</div></li>
+        <li><svg class="ico"><use href="#i-lock"/></svg><div>שום דבר לא נשמר בדפדפן. כשסוגרים את הלשונית, הכל נמחק.</div></li>
+      </ul>
+    </div>
+    <div class="actions">
+      <button class="btn" id="again-share" hidden>לשלוח ישירות (וואטסאפ, מייל)</button>
+      <button class="btn ghost" data-go="s-report">חזרה לדוח</button>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
