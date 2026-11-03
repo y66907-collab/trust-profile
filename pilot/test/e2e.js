@@ -35,8 +35,20 @@ const rows = fs.existsSync(rowsFile) ? JSON.parse(fs.readFileSync(rowsFile, "utf
 const byId = new Map(rows.map((r) => [r.id, r]));
 const enc = (s) => "=?UTF-8?B?" + Buffer.from(s).toString("base64") + "?=";
 
+// the part of Gmail's search language the page uses
+function matches(x, q) {
+  const subj = x.subject.toLowerCase();
+  for (const [, field, val] of q.matchAll(/(from|to|subject):("[^"]*"|\([^)]*\)|\S+)/g)) {
+    const v = val.replace(/^["(]|[")]$/g, "").toLowerCase();
+    if (field === "from" && !x.from.toLowerCase().includes(v)) return false;
+    if (field === "to" && !x.to.toLowerCase().includes(v)) return false;
+    if (field === "subject" && !v.split(" or ").some((w) => subj.includes(w.trim()))) return false;
+  }
+  return !q.includes("in:sent") || x.sent;
+}
+
 const GSI = `window.google={accounts:{oauth2:{
-  initTokenClient:(o)=>({requestAccessToken:()=>setTimeout(()=>o.callback({access_token:"tok",scope:"https://www.googleapis.com/auth/gmail.metadata"}),50)}),
+  initTokenClient:(o)=>({requestAccessToken:()=>setTimeout(()=>o.callback({access_token:"tok",scope:"https://www.googleapis.com/auth/gmail.readonly"}),50)}),
   hasGrantedAllScopes:()=>true, revoke:(t,cb)=>{window.__revoked=t;cb&&cb()}}}};`;
 
 async function run(browser, mode) {
@@ -71,25 +83,27 @@ async function run(browser, mode) {
     posts.push(r.request().postData());
     r.fulfill({ body: '{"ok":true}', contentType: "application/json", headers });
   });
-  let gets = 0, promoRead = 0;
+  let gets = 0, promoRead = 0, lists = 0;
   await ctx.route("https://gmail.googleapis.com/**", (r) => {
     const u = new URL(r.request().url());
     const json = (o) => r.fulfill({ body: JSON.stringify(o), contentType: "application/json", headers: { "access-control-allow-origin": "*" } });
     if (u.pathname.endsWith("/profile")) return json({ emailAddress: ME, messagesTotal: rows.length });
     if (u.pathname.endsWith("/messages")) {
-      if (u.searchParams.get("labelIds") === "CATEGORY_PROMOTIONS")
-        return json({ messages: rows.filter((x) => x.promo).sort((a, b) => b.ts - a.ts).map((x) => ({ id: x.id, threadId: x.thread })) });
+      lists++;
       const start = Number(u.searchParams.get("pageToken") || 0);
-      const sorted = [...rows].sort((a, b) => b.ts - a.ts);
+      const label = u.searchParams.get("labelIds"), q = u.searchParams.get("q");
+      if (q) assert(/after:\d{4}\/\d\d\/\d\d/.test(q), "search without a date: " + q);
+      const sorted = [...rows].sort((a, b) => b.ts - a.ts).filter((x) =>
+        label === "CATEGORY_PROMOTIONS" ? x.promo : label === "SENT" ? x.sent : label ? false : q ? matches(x, q) : true);
       const old = [{ id: "16d0c7e0a0000000", threadId: "16d0c7e0a0000000" }]; // a 2019 message, outside the 3 years
-      const all = sorted.map((x) => ({ id: x.id, threadId: x.thread })).concat(old);
+      const all = sorted.map((x) => ({ id: x.id, threadId: x.thread })).concat(label || q ? [] : old);
       return json({ messages: all.slice(start, start + 500), nextPageToken: start + 500 < all.length ? String(start + 500) : undefined });
     }
     const id = u.pathname.split("/").pop();
     const x = byId.get(id);
     if (x.promo) promoRead++;
     gets++;
-    if (gets === 7) return r.fulfill({ status: 429, body: "{}", headers: { "access-control-allow-origin": "*" } }); // one rate-limit hit
+    if (gets === 2) return r.fulfill({ status: 429, body: "{}", headers: { "access-control-allow-origin": "*" } }); // one rate-limit hit
     const from = x.sent ? `${enc(OWNER_HE)} <${ME}>` : x.from;
     return json({ id, threadId: x.thread, internalDate: String(x.ts), labelIds: x.sent ? ["SENT"] : ["INBOX"],
       payload: { headers: [{ name: "From", value: from }, { name: "To", value: x.to }, { name: "Subject", value: x.subject }] } });
@@ -113,6 +127,19 @@ async function run(browser, mode) {
   await page.waitForSelector("#s-report.on", { timeout: 180000 });
   assert.strictEqual(await page.evaluate(() => window.__revoked), "tok", "access was not revoked");
   assert.strictEqual(promoRead, 0, "a promotion was read");
+  const run = await page.evaluate(() => S.run);
+  const inScope = rows.filter((x) => !x.promo).length;
+  assert.strictEqual(run.messages, inScope, "not every mail was accounted for");
+  assert.strictEqual(run.reads, gets - 1, "reads count"); // one rate-limit hit is retried
+  assert(gets < inScope / 2, `opened ${gets} of ${inScope}: the point is not to open each mail`);
+  const report = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g) => g.params).map((p) => [p.key, p])));
+  if (!fs.existsSync(rowsFile)) {
+    assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
+    assert(/בזק/.test(String(report.utility_accounts.v)), "the bills found by search were missed: " + report.utility_accounts.v);
+    const shop = (await page.evaluate(() => S.result.unknown)).find((u) => u.domain === "shop-example.co.il");
+    assert.strictEqual(shop?.count, 3, "an unknown sender's mail was not all counted");
+  }
+  console.log(`${mode}: ${gets} opened, ${lists} lists, for ${inScope} mails`);
   await shot("2-report");
   assert(!FORBIDDEN.test(await page.evaluate(() => JSON.stringify(S.result.groups) + document.body.textContent)), "purpose word in the report");
 

@@ -44,7 +44,7 @@
     <div class="card">
       <h2>חשוב לדעת</h2>
       <ul class="facts">
-        <li><svg class="ico"><use href="#i-env"/></svg><div><b>נקראת רק המעטפה:</b> שולח, נמען, נושא ותאריך. תוכן המיילים לא נקרא.</div></li>
+        <li><svg class="ico"><use href="#i-env"/></svg><div><b>בודקים רק את המעטפה:</b> מי שלח, למי, הנושא והתאריך. הבדיקה לא פותחת את תוכן המיילים.</div></li>
         <li><svg class="ico"><use href="#i-lock"/></svg><div><b>הבדיקה רצה אצלך:</b> בדפדפן שלך, בלי שרת. בסוף נשלח רק מה שתאשר/י.</div></li>
         <li><svg class="ico"><use href="#i-unlink"/></svg><div><b>הגישה מתבטלת לבד</b> מיד כשהקריאה נגמרת.</div></li>
         <li><svg class="ico"><use href="#i-eye"/></svg><div><b>לא חייבים לשתף את התוצאה.</b> אפשר לשמור אותה לעצמך ולענות רק אם המנוע צדק. לפני השליחה רואים בדיוק מה נשלח.</div></li>
@@ -88,8 +88,14 @@
         <ol class="howto">
           <li><div>ייפתח חלון של Google. בוחרים את החשבון.</div></li>
           <li><div>תופיע ההודעה <span class="en">Google hasn't verified this app</span>. זה צפוי בבדיקה כזו. לוחצים <span class="en">Advanced</span> ואז <span class="en">Go to <span id="app-name"></span></span>.</div></li>
-          <li><div>מאשרים הרשאה אחת: <span class="en">View your email message metadata</span>. זה רק המעטפות, בלי תוכן.</div></li>
+          <li><div>מאשרים הרשאה אחת: <span class="en">View your email messages and settings</span>.</div></li>
         </ol>
+      </div>
+      <div class="card soft">
+        <b>למה Google שואל על קריאת מיילים?</b>
+        <p style="margin:8px 0">תחשוב/י על התיבה שלך כמו על ארון עם המון מכתבים. כדי שזה ייקח כמה דקות ולא שעה, הבדיקה לא מוציאה כל מכתב. היא שואלת את Gmail שאלות כמו "כמה מכתבים הגיעו מחברת החשמל, ומתי?".</p>
+        <p style="margin:8px 0">בשביל לשאול שאלות כאלה, Google מבקש ממך לאשר קריאה של המיילים. זה הנוסח שלו, והאישור באמת מאפשר גישה רחבה כזו.</p>
+        <p style="margin:8px 0 0"><b>מה הבדיקה עושה בפועל:</b> מסתכלת רק על מי שלח, למי, מה הנושא ומתי. היא לא פותחת את תוכן המיילים. הכול רץ בדפדפן שלך, והגישה מתבטלת לבד בסוף.</p>
       </div>
       <div class="actions">
         <button class="btn google" id="connect"><svg class="ico" style="margin:0"><use href="#i-env"/></svg>חיבור Gmail</button>
@@ -98,12 +104,12 @@
       <div class="err" id="connect-err" hidden></div>
     </div>
     <div id="connect-run" hidden>
-      <h1>קוראים את המעטפות</h1>
+      <h1>בודקים את המעטפות</h1>
       <p class="lead" id="run-lead">אפשר להשאיר את הלשונית פתוחה ולעשות דברים אחרים.</p>
       <div class="card">
         <ul class="stages" id="stages">
           <li data-k="list"><span class="dot"></span><span>סופרים מיילים</span><span class="small" data-n></span></li>
-          <li data-k="read"><span class="dot"></span><span>קוראים מעטפות של <span id="yrs"></span> שנים</span><span class="small" data-n></span></li>
+          <li data-k="read"><span class="dot"></span><span>בודקים מעטפות של <span id="yrs"></span> שנים</span><span class="small" data-n></span></li>
           <li data-k="revoke"><span class="dot"></span><span>מבטלים את הגישה ל-Gmail</span><span class="small" data-n></span></li>
           <li data-k="engine"><span class="dot"></span><span>מסכמים</span><span class="small" data-n></span></li>
         </ul>

@@ -275,8 +275,16 @@ def run(payload_json: str) -> str:
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]
-    unknown = sorted((t for t in templates.values()
-                      if not t["domain"].startswith("out:") and t["count"] >= 2 and not t["event_type"]
+    # mail known only from a search has an empty subject. It counts towards its sender, under the subject of the mail opened
+    pooled: dict[str, dict] = {}
+    for t in templates.values():
+        if t["domain"].startswith("out:") or t["event_type"]:
+            continue
+        cur = pooled.setdefault(t["domain"], {**t, "count": 0, "skeleton": "<EMPTY>"})
+        cur["count"] += t["count"]
+        if t["skeleton"] != "<EMPTY>" and cur["skeleton"] == "<EMPTY>":
+            cur["skeleton"] = t["skeleton"]
+    unknown = sorted((t for t in pooled.values() if t["count"] >= 2 and t["skeleton"] != "<EMPTY>"
                       and not SENSITIVE.search(t["domain"] + " " + t["skeleton"])),
                      key=lambda t: -t["count"])[:80]
     first_names = [n.split()[0] for n in [owner["name_he"], owner.get("name_en") or "", hh["name"] if hh else ""] if n]
