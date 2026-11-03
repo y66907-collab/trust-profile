@@ -3,7 +3,21 @@
 "use strict";
 
 const CFG = window.IMTRUSTME;
-const SCOPE = "https://www.googleapis.com/auth/gmail.metadata";
+const SCOPE = "https://www.googleapis.com/auth/gmail.readonly"; // search needs it: gmail.metadata refuses the q parameter
+// Gmail's budget per person is 6,000 units a minute. A read costs 20 and a list of up to 500 ids costs 5
+const READ_UNITS = 20, LIST_UNITS = 5, UNIT_MS = 11; // 11 ms a unit keeps just under the budget
+const PERSONAL_DOMAINS = ["gmail.com", "walla.co.il", "walla.com", "hotmail.com", "outlook.com", "yahoo.com", "012.net.il",
+  "netvision.net.il", "bezeqint.net", "013net.net", "icloud.com", "live.com", "googlemail.com"]; // same list as engine.py
+const PLATFORM_DOMAINS = ["linkedin.com", "facebookmail.com", "facebook.com", "instagram.com", "mail.instagram.com", "github.com"]; // pilot.py
+// One search for each report row that reads a mail's wording. Whatever comes back is opened, and pilot.py decides on the real subject
+const SIGNAL_QUERIES = [
+  'subject:"כתב תביעה"', 'subject:"תביעה קטנה"', 'subject:"בית משפט"', 'subject:"בית המשפט"', 'subject:"הוצאה לפועל"',
+  'subject:"רשות האכיפה"', "subject:עיקול", "subject:chargeback", 'subject:"הכחשת עסקה"',
+  'subject:"חשבון מוגבל"', 'subject:"שיק חוזר"', 'subject:"שיקים חוזרים"', 'subject:"חריגה ממסגרת"', 'subject:"הגבלת חשבון"', 'subject:"התראה לפני הגבלה"',
+  'subject:"הסכם הלוואה"', 'subject:"שינוי כתובת מגורים"', "subject:משכנתא",
+  'subject:"תלוש שכר"', 'subject:"תלוש משכורת"', 'subject:"תלוש לחודש"', "subject:payslip",
+  "subject:(רבעוני OR תקופתי OR שנתי) subject:(פנסיה OR גמל OR השתלמות)",
+];
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -63,7 +77,7 @@ $("#connect").addEventListener("click", () => {
     scope: SCOPE,
     callback: (t) => {
       if (t.error || !google.accounts.oauth2.hasGrantedAllScopes(t, SCOPE)) {
-        err.textContent = "לא התקבלה הרשאה לקרוא מעטפות. אפשר לנסות שוב, ולסמן את ההרשאה בחלון של Google.";
+        err.textContent = "לא התקבלה ההרשאה. אפשר לנסות שוב, ולסמן את ההרשאה בחלון של Google.";
         err.hidden = false;
         return;
       }
@@ -91,23 +105,22 @@ function fail(e) {
 // pace recovers step by step. Only a real refusal, or Gmail silent for GIVE_UP_MS, stops the run.
 const RATE_REASONS = ["rateLimitExceeded", "userRateLimitExceeded"];
 const GIVE_UP_MS = 20 * 6e4;
-const MIN_GAP_MS = 100, MAX_GAP_MS = 2000;
-const flow = { gap: MIN_GAP_MS, next: 0, hits: 0, lastOk: 0 };
+const flow = { slow: 1, next: 0, hits: 0, lastOk: 0 }; // slow: how far below the budget Gmail has pushed us
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 function slowDown(retryAfter) {
   if (Date.now() - flow.lastOk > GIVE_UP_MS) throw new Error("Gmail לא עונה כבר 20 דקות");
   flow.hits++;
-  flow.gap = Math.min(MAX_GAP_MS, flow.gap * 1.5);
+  flow.slow = Math.min(8, flow.slow * 1.5);
   const pause = Math.max(Math.min(6e4, 1000 * 2 ** flow.hits), (+retryAfter || 0) * 1000) + Math.random() * 500;
   flow.next = Math.max(flow.next, Date.now() + pause);
 }
 
-async function gget(url) {
+async function gget(url, units = LIST_UNITS) {
   if (!flow.lastOk) flow.lastOk = Date.now();
   for (;;) {
     const now = Date.now(), at = Math.max(now, flow.next);
-    flow.next = at + flow.gap;
+    flow.next = at + units * UNIT_MS * flow.slow;
     if (at > now) await sleep(at - now);
     let r;
     try {
@@ -119,7 +132,7 @@ async function gget(url) {
     if (r.ok) {
       flow.lastOk = Date.now();
       flow.hits = 0;
-      flow.gap = Math.max(MIN_GAP_MS, flow.gap * 0.98);
+      flow.slow = Math.max(1, flow.slow * 0.98);
       return r.json();
     }
     if (r.status === 401) {
@@ -201,74 +214,141 @@ async function readMailbox() {
   window.onbeforeunload = () => true;
 
   const profile = await gget(API + "/profile");
+  const own = profile.emailAddress.toLowerCase();
   const since = Date.now() - CFG.years * 365.25 * 864e5;
+  const after = "after:" + new Date(since).toISOString().slice(0, 10).replace(/-/g, "/");
 
-  // 1. list every id (cheap). The oldest id gives the mailbox age; only the last N years are read
+  // Every list comes back newest first, so a filtered list stops at the start of the period
+  async function list(params) {
+    const out = [];
+    let token = "", inPeriod = true;
+    do {
+      const page = await gget(`${API}/messages?maxResults=500&${params}${token ? "&pageToken=" + token : ""}`, LIST_UNITS);
+      for (const m of page.messages || []) {
+        if (idTime(m.id) >= since) out.push(m);
+        else inPeriod = false;
+      }
+      token = page.nextPageToken;
+    } while (token && inPeriod);
+    return out;
+  }
+  const search = (q) => list("q=" + encodeURIComponent(`${q} ${after}`));
+
+  // 1. every id in the period (cheap). The oldest id gives the mailbox age
   stage("list", "now");
-  // Promotions are dropped by id: listing them is cheap (500 per request) and each one skipped saves a whole read.
-  // A list comes back newest first, so this stops at the start of the period
-  const promo = new Set();
-  let token = "", inPeriod = true;
+  const [promo, draft, sentIds] = await Promise.all(["CATEGORY_PROMOTIONS", "DRAFT", "SENT"].map((l) => list("labelIds=" + l)));
+  const drop = new Set(promo.map((m) => m.id));
+  const drafts = new Set(draft.map((m) => m.id));
+  const pending = new Map(); // id -> thread: mail we can't yet say who sent
+  let token = "", oldest = Infinity, skipped = 0;
   do {
-    const page = await gget(`${API}/messages?labelIds=CATEGORY_PROMOTIONS&maxResults=500${token ? "&pageToken=" + token : ""}`);
-    for (const m of page.messages || []) {
-      if (idTime(m.id) >= since) promo.add(m.id);
-      else inPeriod = false;
-    }
-    token = page.nextPageToken;
-  } while (token && inPeriod);
-
-  let ids = [], skipped = 0, oldest = Infinity;
-  do {
-    const page = await gget(`${API}/messages?maxResults=500${token ? "&pageToken=" + token : ""}`);
+    const page = await gget(`${API}/messages?maxResults=500${token ? "&pageToken=" + token : ""}`, LIST_UNITS);
     for (const m of page.messages || []) {
       const t = idTime(m.id);
       if (t < oldest) oldest = t;
-      if (t < since) continue;
-      if (promo.has(m.id)) skipped++;
-      else ids.push(m);
+      if (t < since || drafts.has(m.id)) continue;
+      if (drop.has(m.id)) skipped++;
+      else pending.set(m.id, m.threadId);
     }
     token = page.nextPageToken;
-    stage("list", "now", fmtN(ids.length));
-    bar(Math.min(0.08, 0.002 * (ids.length / 500)));
+    stage("list", "now", fmtN(pending.size));
   } while (token);
-  stage("list", "done", fmtN(ids.length));
+  const total = pending.size;
+  const threadOf = new Map(pending);
+  stage("list", "done", fmtN(total));
 
-  // 2. envelopes, a few at a time (Gmail allows ~50 a second per person)
+  // 2. who sent what, by asking Gmail instead of opening each mail: a search costs what a quarter of a read costs and
+  // answers for up to 500 mails, and each id already carries its date
   stage("read", "now");
-  const rows = [], senders = new Map();
-  let done = 0, sentChecked = 0;
   const t0 = performance.now();
-  const q = ids.slice();
-  const headers = ["From", "To", "Subject"].map((h) => "&metadataHeaders=" + h).join("");
-  async function lane() {
-    while (q.length) {
-      const m = q.shift();
-      const g = await gget(`${API}/messages/${m.id}?format=metadata${headers}`);
-      const h = Object.fromEntries((g.payload?.headers || []).map((x) => [x.name.toLowerCase(), x.value]));
-      const labels = g.labelIds || [];
-      if (!labels.includes("DRAFT")) {
-        const sent = labels.includes("SENT");
-        rows.push({ thread: g.threadId, id: g.id, ts: +g.internalDate || idTime(g.id), from: addrOf(h.from), to: addrOf(h.to),
-                    subject: decodeWords(h.subject || "").replace(/[\t\r\n]+/g, " "), sent });
-        if (sent && addrOf(h.from) === profile.emailAddress.toLowerCase()) {
-          sentChecked++;
-          const nm = nameOf(h.from);
-          if (nm) senders.set(nm, (senders.get(nm) || 0) + 1);
-        }
-      }
-      done++;
-      if (done % 25 === 0 || done === ids.length) {
-        stage("read", "now", `${fmtN(done)} / ${fmtN(ids.length)}`);
-        bar(0.08 + 0.82 * (done / ids.length));
-        const rate = done / ((performance.now() - t0) / 1000);
-        const left = Math.max(0, (ids.length - done) / rate);
-        $("#eta").textContent = left > 50 ? `נשארו בערך ${Math.round(left / 60)} דקות` : "עוד רגע";
-      }
-    }
+  const rows = new Map();
+  let reads = 0;
+  const show = () => {
+    const left = pending.size;
+    stage("read", "now", `${fmtN(total - left)} / ${fmtN(total)}`);
+    bar(0.08 + 0.82 * ((total - left) / (total || 1)));
+    $("#eta").textContent = left ? "עוד כמה דקות" : "עוד רגע";
+  };
+  function place(m, fields) {
+    if (!threadOf.has(m.id)) return null; // a promotion or a draft
+    pending.delete(m.id);
+    const row = rows.get(m.id) || { thread: threadOf.get(m.id), id: m.id, ts: idTime(m.id), from: "", to: "", subject: "", sent: false };
+    rows.set(m.id, row);
+    return Object.assign(row, fields);
   }
-  await Promise.all(Array.from({ length: 4 }, lane));
-  stage("read", "done", fmtN(rows.length));
+  const pool = async (items, size, fn) => {
+    const q = items.slice();
+    await Promise.all(Array.from({ length: Math.min(size, q.length) }, async () => { while (q.length) await fn(q.shift()); }));
+  };
+  const headers = ["From", "To", "Subject"].map((h) => "&metadataHeaders=" + h).join("");
+  const opened = new Set(), senderName = new Map();
+  let sentChecked = 0;
+  async function open(id) {
+    if (opened.has(id) || !threadOf.has(id)) return null;
+    opened.add(id);
+    const g = await gget(`${API}/messages/${id}?format=metadata${headers}`, READ_UNITS);
+    reads++;
+    const h = Object.fromEntries((g.payload?.headers || []).map((x) => [x.name.toLowerCase(), x.value]));
+    const sent = (g.labelIds || []).includes("SENT");
+    if (sent && addrOf(h.from) === own) {
+      sentChecked++;
+      const nm = nameOf(h.from);
+      if (nm) senderName.set(nm, (senderName.get(nm) || 0) + 1);
+    }
+    const row = place({ id }, { from: addrOf(h.from), to: addrOf(h.to), subject: decodeWords(h.subject || "").replace(/[\t\r\n]+/g, " "), sent, real: true });
+    show();
+    return row;
+  }
+
+  sentIds.forEach((m) => place(m, { from: own, sent: true }));
+  show();
+
+  const [senders, labels] = await Promise.all(["senders", "labels"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
+  const known = [...new Set([...Object.keys(senders), ...labels.map((l) => l.domain), ...PLATFORM_DOMAINS])];
+
+  // known companies: all their mail, and mail sent to them
+  await pool(known, 8, async (d) => {
+    (await search(`from:${d}`)).forEach((m) => { const r = place(m, {}); if (r && !r.real && !r.sent) r.from = "x@" + d; });
+    (await search(`to:${d} in:sent`)).forEach((m) => { const r = place(m, {}); if (r && !r.real) r.to = "x@" + d; });
+    show();
+  });
+  // what kind of mail each is: the engine labels a mail by a phrase of its subject, so the phrase it was found by is enough.
+  // Applied in the rules' order: first rule wins, as in the engine
+  const hits = new Array(labels.length);
+  await pool(labels.map((l, i) => [l, i]), 8, async ([l, i]) => { hits[i] = await search(`from:${l.domain} subject:"${l.match.replace(/"/g, "")}"`); });
+  labels.forEach((l, i) => hits[i].forEach((m) => { const r = rows.get(m.id); if (r && !r.real && !r.subject) r.subject = l.match; }));
+  // bills on the owner's name, or the household's
+  const names = [S.owner.name_he, S.owner.name_he.split(" ").slice(1).concat(S.owner.name_he.split(" ")[0]).join(" "), S.owner.name_en, S.owner.household?.name].filter(Boolean);
+  const named = new Map();
+  await pool([...new Set(names)], 4, async (n) => { (await search(`subject:"${n.replace(/"/g, "")}"`)).forEach((m) => named.has(m.id) || named.set(m.id, n)); });
+  // private mail stays out of the report: its count is all the engine needs
+  await pool(PERSONAL_DOMAINS, 8, async (d) => {
+    (await search(`from:${d}`)).forEach((m) => { const r = place(m, {}); if (r && !r.real && !r.sent) r.from = "x@" + d; });
+    show();
+  });
+  // the rows that depend on exact wording are opened, so nothing here rests on a search alone
+  const toOpen = new Set();
+  await pool(SIGNAL_QUERIES, 8, async (q) => { (await search(q)).forEach((m) => toOpen.add(m.id)); });
+  sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
+  await pool([...toOpen], 4, open);
+
+  // everyone else: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail is left unaccounted for
+  const asked = new Set([...known, ...PERSONAL_DOMAINS]);
+  const queue = [...pending.keys()].sort((a, b) => idTime(b) - idTime(a));
+  await pool(Array.from({ length: 4 }), 4, async () => {
+    while (queue.length) {
+      const id = queue.shift();
+      if (!pending.has(id)) continue;
+      const row = await open(id);
+      const d = row?.from.split("@")[1];
+      if (!d || asked.has(d)) continue;
+      asked.add(d);
+      (await search(`from:${d}`)).forEach((m) => { const r = place(m, {}); if (r && !r.real && !r.sent) r.from = "x@" + d; });
+      show();
+    }
+  });
+  const out = [...rows.values()].map(({ real, ...r }) => (!real && named.has(r.id) ? { ...r, subject: `${r.subject} ${named.get(r.id)}`.trim() } : r));
+  stage("read", "done", fmtN(out.length));
 
   // 3. access is no longer needed: revoke before the engine even starts
   stage("revoke", "now");
@@ -280,16 +360,17 @@ async function readMailbox() {
   $("#eta").textContent = engineReady ? "" : "מטעינים את המנוע…";
   await whenEngine();
   if (engineErr) throw new Error("המנוע לא נטען (" + engineErr + ")");
-  const account = [...senders.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+  const account = [...senderName.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
   const today = new Date().toLocaleDateString("sv-SE");
-  S.run = { messages: rows.length, listed: ids.length, skipped_promotions: skipped, mailbox_since: isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null };
+  S.run = { messages: out.length, listed: total, skipped_promotions: skipped, reads, read_seconds: Math.round((performance.now() - t0) / 1000),
+            mailbox_since: isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null };
   const result = await new Promise((res, rej) => {
     S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
     worker.postMessage({ type: "run", payload: {
-      today, owner: S.owner, own_addresses: [profile.emailAddress], rows, account_name: account,
+      today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
       sent_checked: sentChecked, mailbox_since: S.run.mailbox_since } });
   });
-  rows.length = 0; // the envelopes are not kept once the profile exists
+  out.length = 0; rows.clear(); // the envelopes are not kept once the profile exists
   stage("engine", "done");
   bar(1);
   window.onbeforeunload = null;
@@ -427,7 +508,7 @@ function statsRecord() {
   const st = S.result.stats;
   const out = { messages: st.messages, business_in: st.business_in, business_in_registered: st.business_in_registered,
                 business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs,
-                skipped_promotions: S.run.skipped_promotions };
+                skipped_promotions: S.run.skipped_promotions, reads: S.run.reads, read_seconds: S.run.read_seconds };
   if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
   return out;
 }
@@ -452,7 +533,7 @@ $("#to-feedback").addEventListener("click", () => {
   const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "—");
   $("#fb-stats").innerHTML = fbItem("stats", "all", "ספירות",
     `${fmtN(st.messages)} מיילים · ${fmtN(st.business_in)} מגופים · מזוהים ${pct(st.business_in_registered, st.business_in)} · ` +
-    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${fmtN(st.skipped_promotions)} פרסומות שלא נקראו`);
+    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${fmtN(st.skipped_promotions)} פרסומות שדולגו · ${fmtN(st.reads)} מיילים שנפתחה הכותרת שלהם · ${fmtN(st.read_seconds)} שניות`);
 
   // Without the report these start unticked: a sender's address can hint at what someone uses
   const unknownOn = !isPrivate();
