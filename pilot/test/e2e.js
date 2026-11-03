@@ -29,6 +29,16 @@ function fixture() {
   for (let m = 0; m < 4; m++) { add(20 * m + 6, "deals@booking.com", "ההזמנה שלך"); if (m > 1) out[out.length - 1].promo = true; }
   for (let m = 0; m < 5; m++) { add(4 * m + 1, "sale@promo-example.co.il", "מבצע"); out[out.length - 1].promo = true; }
   add(2, "", "שלום", true);
+  // replies half an hour later, a job interview, and a monthly receipt from a sender the engine doesn't know
+  for (let m = 0; m < 6; m++) {
+    add(60 + m, "partner@example.com", "שאלה");
+    const q = out[out.length - 1];
+    add(60 + m, "", "תשובה", true);
+    const a = out[out.length - 1];
+    a.ts = q.ts + 30 * 60000; a.id = (BigInt(a.ts) << 20n).toString(16); a.thread = q.thread;
+  }
+  add(100, "hr@acme-example.com", "זימון לראיון עבודה");
+  for (let m = 0; m < 4; m++) add(30 * m + 8, "billing@saasco.io", "קבלה על התשלום");
   return out;
 }
 const rowsFile = path.join(__dirname, "rows.json");
@@ -160,6 +170,13 @@ async function run(browser, mode) {
     assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
     assert.strictEqual(typeof report.credit_report.v !== "undefined", true, "no credit report row");
     assert.ok(report.addressed_to, "no addressed-to row");
+    assert.ok(report.reply_time.v.includes("30"), "reply time: " + report.reply_time.v);
+    assert.strictEqual(report.reply_time.private, false, "a bonus row must not be asked in the private mode");
+    assert.strictEqual(report.job_search.n, 1, "job search count");
+    assert.ok(String(report.subscriptions.v).includes("saasco.io"), "recurring charges from an unknown sender: " + JSON.stringify(report.subscriptions) + " unknown:" + JSON.stringify(await page.evaluate(() => S.result.stats.by_class)));
+    assert.ok(String(report.active_hours.v).includes(":00"), "active hours");
+    assert.ok(/%$/.test(report.promo_share.v), "promotion share");
+    assert((await page.locator("#hero-tiles .tile").count()) >= 3, "the top of the report is empty");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
     assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
     const suppliers = await page.evaluate(() => S.result.suppliers);
@@ -205,6 +222,8 @@ async function run(browser, mode) {
     assert(!(await shown("legal")), "a legal finding must start blacked out");
     assert(!(await shown("interest_travel")), "an interest must start blacked out");
     assert(await shown("city"), "an ordinary row must start visible");
+    assert(await shown("reply_time"), "a harmless finding must start visible");
+    assert(!(await shown("job_search")), "a personal finding must start blacked out");
     await shot("4-review");
     const secret = await page.evaluate((id) => valText(param(id)), ids.longest_supplier);
     assert((await page.textContent("#rev-groups")).includes(secret), "row value should be on the screen");
@@ -258,6 +277,7 @@ async function run(browser, mode) {
     for (const v of fb.verdicts) {
       assert(!("value" in v) && !("note" in v), "value or note in a private verdict: " + v.key);
       assert(!["household_accounts"].includes(v.key) && !/^(platform|interest)_/.test(v.key), "conditional row sent: " + v.key);
+      assert(!["reply_time", "job_search", "subscriptions", "unread"].includes(v.key), "bonus row sent: " + v.key);
     }
     assert.deepStrictEqual(Object.keys(legal).sort(), ["key", "label", "verdict"], "a sensitive row carries more than the answer");
     assert.strictEqual(fb.unknown_senders.length, 0, "unknown senders must start unticked");
