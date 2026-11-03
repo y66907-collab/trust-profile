@@ -158,24 +158,56 @@ async function run(browser, mode) {
   await shot("3-choose");
   await page.click(`[data-mode="${mode}"]`);
 
-  // answer: "city" wrong with a kind, "legal" wrong, one row skipped, everything else correct
-  const total = await page.evaluate(() => S.checkList.length);
-  for (let i = 0; i < total; i++) {
-    const key = await page.evaluate(() => param(S.checkList[S.checkAt]).key);
-    if (i === 0) await shot("4-check");
-    if (key === "city") {
-      await page.click('[data-verdict="wrong"]');
-      await shot("5-check-wrong");
-      await page.click('[data-kind="inaccurate"]');
-      if (mode === "full") { await page.fill("#chk-note", "הערה לבדיקה"); await page.click("#chk-next"); }
-    } else if (key === "legal") {
-      await page.click('[data-verdict="wrong"]');
-      if (mode === "full") { await page.click('[data-kind="invented"]'); await page.click("#chk-next"); }
-    } else if (key === "loans") {
-      await page.click("#chk-skip");
-    } else {
-      await page.click('[data-verdict="correct"]');
+  const total = await page.evaluate(() => S.result.groups.reduce((a, g) => a + g.params.length, 0));
+  if (mode === "private") {
+    // answer: "city" wrong with a kind, "legal" wrong, one row skipped, everything else correct
+    const total = await page.evaluate(() => S.checkList.length);
+    for (let i = 0; i < total; i++) {
+      const key = await page.evaluate(() => param(S.checkList[S.checkAt]).key);
+      if (i === 0) await shot("4-check");
+      if (key === "city") {
+        await page.click('[data-verdict="wrong"]');
+        await shot("5-check-wrong");
+        await page.click('[data-kind="inaccurate"]');
+      } else if (key === "legal") {
+        await page.click('[data-verdict="wrong"]');
+      } else if (key === "loans") {
+        await page.click("#chk-skip");
+      } else {
+        await page.click('[data-verdict="correct"]');
+      }
     }
+  } else {
+    // the report itself: black out one row, open a sensitive one, answer and comment on the row
+    await page.waitForSelector("#s-review.on");
+    const ids = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g, gi) => g.params.map((p, pi) => [p.key, `${gi}.${pi}`]))));
+    const row = (k) => `.rv-row[data-id="${ids[k]}"]`;
+    const shown = (k) => page.isChecked(`${row(k)} [data-show]`);
+    assert(!(await shown("legal")), "a legal finding must start blacked out");
+    assert(!(await shown("interest_travel")), "an interest must start blacked out");
+    assert(await shown("city"), "an ordinary row must start visible");
+    await shot("4-review");
+    const secret = await page.evaluate((id) => valText(param(id)), ids.longest_supplier);
+    assert((await page.textContent("#rev-groups")).includes(secret), "row value should be on the screen");
+    await page.uncheck(`${row("longest_supplier")} [data-show]`);
+    assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
+    await page.check(`${row("legal")} [data-show]`);
+    await page.click(`${row("legal")} [data-rv="wrong"]`);
+    await page.click(`${row("legal")} [data-rk="invented"]`);
+    await page.click(`${row("city")} [data-rv="wrong"]`);
+    await page.click(`${row("city")} [data-rk="inaccurate"]`);
+    await page.click(`${row("city")} [data-note-open]`);
+    await page.fill(`${row("city")} [data-note]`, "הערה לבדיקה");
+    await page.click(`${row("longest_supplier")} [data-note-open]`);
+    await page.fill(`${row("longest_supplier")} [data-note]`, "הערה על שורה מושחרת");
+    await page.click(`${row("mailbox_age")} [data-note-open]`);
+    await page.fill(`${row("mailbox_age")} [data-note]`, "רק הערה, בלי תשובה");
+    for (const k of Object.keys(ids)) {
+      if (["city", "legal", "loans", "mailbox_age"].includes(k)) continue;
+      if (await page.isVisible(`${row(k)} [data-rv="correct"]`)) await page.click(`${row(k)} [data-rv="correct"]`);
+    }
+    await shot("5-review-done");
+    await page.click('#s-review [data-go="s-questions"]');
   }
   await page.waitForSelector("#s-questions.on");
   await page.click("text=רוב הדברים");
@@ -210,6 +242,7 @@ async function run(browser, mode) {
     }
     assert.deepStrictEqual(Object.keys(legal).sort(), ["key", "label", "verdict"], "a sensitive row carries more than the answer");
     assert.strictEqual(fb.unknown_senders.length, 0, "unknown senders must start unticked");
+    assert(!("report" in fb), "a report in a private file");
     assert(!("findings_rows" in fb.stats), "findings count in a private file");
     const secrets = [OWNER_HE, HH_NAME, ME];
     for (const g of result.groups) for (const p of g.params)
@@ -226,9 +259,35 @@ async function run(browser, mode) {
     assert.ok("value" in legal, "wrong row should carry the value");
     assert.strictEqual(city.note, "הערה לבדיקה");
     assert(!fb.verdicts.find((v) => v.verdict === "correct" && "value" in v), "value on a correct row");
-    assert(!text.includes(HH_NAME) || fb.verdicts.some((v) => v.value?.includes(HH_NAME)), "household name in the file");
+    // what was blacked out is not in the file at all, while its answer and comment are
+    const params = result.groups.flatMap((g) => g.params);
+    const hiddenValue = String(params.find((p) => p.key === "longest_supplier").v);
+    assert(!text.includes(hiddenValue), "blacked-out value in the file: " + hiddenValue);
+    const repRows = fb.report.groups.flatMap((g) => g.rows);
+    const hiddenRow = repRows.find((r) => r.key === "longest_supplier");
+    assert(hiddenRow.hidden && !("value" in hiddenRow) && !("evidence" in hiddenRow), "a blacked-out row carries more than its name");
+    const hv = fb.verdicts.find((v) => v.key === "longest_supplier");
+    assert(hv.hidden && hv.note === "הערה על שורה מושחרת" && !("value" in hv), "the answer on a blacked-out row");
+    assert.strictEqual(fb.verdicts.find((v) => v.key === "mailbox_age").verdict, "comment", "a comment without an answer");
+    assert.strictEqual(repRows.find((r) => r.key === "city").value, String(params.find((p) => p.key === "city").v ?? params.find((p) => p.key === "city").why), "a visible row must carry its value");
+    assert(repRows.find((r) => r.key === "legal")?.value, "a row opened by the participant must carry its value");
+    // rows that say something by name alone are gone entirely unless opened
+    assert(!repRows.some((r) => /^(platform|interest)_|household/.test(r.key)), "a conditional row was sent while blacked out");
+    assert(!fb.verdicts.some((v) => /^(platform|interest)_|household/.test(v.key)), "a conditional answer was sent while blacked out");
+    assert(!text.includes(HH_NAME), "household name in the file");
+    assert(!text.includes("booking.com"), "a blacked-out interest shows through the unknown senders");
+    // the mail: readable, carries what's visible, and escapes whatever it was sent
+    const gs = fs.readFileSync(path.join(__dirname, "../tools/send_feedback.gs"), "utf8");
+    const html = require("vm").runInNewContext(`${gs};renderMail(d)`, { d: { ...fb, from: "<img src=x>" }, MailApp: {}, ContentService: {} });
+    assert(html.includes("&lt;img") && !html.includes("<img"), "the mail does not escape");
+    assert(html.includes("הערה לבדיקה") && !html.includes(hiddenValue), "the mail content");
+    fs.writeFileSync(path.join(SHOTS, "mail-full.html"), `<!doctype html><meta charset="utf-8">${html}`);
+    const mailPage = await ctx.newPage();
+    await mailPage.goto("file://" + path.resolve(SHOTS, "mail-full.html"));
+    await mailPage.screenshot({ path: path.join(SHOTS, "mail-full.png"), fullPage: true });
+    await mailPage.close();
     fs.writeFileSync(path.join(SHOTS, "feedback-full.json"), text);
-    console.log(`full: ${fb.verdicts.length} answers of ${total} rows, values only on ${fb.verdicts.filter((v) => v.value !== undefined).length} wrong rows`);
+    console.log(`full: ${fb.verdicts.length} answers of ${total} rows, ${repRows.filter((r) => r.hidden).length} rows blacked out, value absent from file and mail`);
   }
   assert.deepStrictEqual(errors.filter((e) => !/429|500/.test(e)), [], "browser errors");
   await ctx.close();

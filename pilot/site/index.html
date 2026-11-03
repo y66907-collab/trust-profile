@@ -160,8 +160,8 @@
       <span>הדוח נשאר רק אצלך. <span class="to-name"></span> תקבל רק אם כל שורה נכונה או לא, בלי מה שכתוב בה.</span>
     </button>
     <button class="choice" data-mode="full">
-      <b>עם הטעויות</b>
-      <span>בשורות שיסומנו כלא נכונות, <span class="to-name"></span> תראה גם מה המנוע כתב, ואפשר להוסיף הערה. כך הכי קל לתקן.</span>
+      <b>עם הדוח</b>
+      <span>רואים את הדוח המלא, משחירים כל שורה שלא רוצים לשתף ומגיבים איפה שרוצים. <span class="to-name"></span> תקבל במייל רק את מה שנשאר גלוי.</span>
     </button>
     <div class="actions"><button class="btn ghost" data-go="s-report">חזרה לדוח</button></div>
   </section>
@@ -195,6 +195,21 @@
     <div class="actions" style="margin-top:14px"><button class="link" id="chk-skip">מעדיף/ה לא לענות על השורה הזו</button></div>
   </section>
 
+  <!-- 6b. the report itself, with the participant's redactions and comments -->
+  <section class="screen" id="s-review" data-step="5">
+    <h1>מה יישלח מהדוח?</h1>
+    <p class="lead">מורידים את ה-V כדי להשחיר שורה. בכל שורה גלויה אפשר לסמן אם היא נכונה ולהגיב.</p>
+    <div class="card soft"><b>שורות רגישות מתחילות מושחרות.</b> הן יישלחו רק אם תסמנו בהן V.</div>
+    <div class="rev-tools">
+      <span class="small" id="rev-count"></span>
+      <span><button class="link" id="rev-none">להשחיר הכול</button> <button class="link" id="rev-all">לסמן הכול</button></span>
+    </div>
+    <div id="rev-groups"></div>
+    <div class="sticky"><div class="in">
+      <button class="btn" data-go="s-questions">המשך</button>
+    </div></div>
+  </section>
+
   <!-- 7. last questions -->
   <section class="screen" id="s-questions" data-step="5">
     <h1>כמעט סיימנו</h1>
@@ -211,7 +226,7 @@
     </div>
     <div class="actions">
       <button class="btn" id="to-feedback">לראות מה יישלח</button>
-      <button class="btn ghost" data-go="s-check">חזרה</button>
+      <button class="btn ghost" id="q-back" data-go="s-check">חזרה</button>
     </div>
   </section>
 
@@ -220,6 +235,7 @@
     <h1>זה מה שיישלח ל<span class="to-name"></span></h1>
     <p class="lead">שום דבר לא יוצא לפני שלוחצים שליחה. אפשר להוריד כל פרט שלא רוצים.</p>
     <div class="card soft" id="fb-private-note" hidden><b>מה שכתוב בדוח לא נשלח.</b> נשלחות רק התשובות שלך, כמו שמופיעות כאן.</div>
+    <div class="card" id="fb-report-card" hidden><h2>הדוח שיישלח</h2><div class="scroll" id="fb-report"></div></div>
     <div class="card"><h2>התשובות שלך</h2><div class="scroll" id="fb-verdicts"></div></div>
     <div class="card" id="fb-answers-card"><h2>השאלות האחרונות</h2><div id="fb-answers"></div></div>
     <div class="card"><h2>מספרים על הבדיקה</h2><p class="small" style="margin-top:0">רק ספירות, בלי שמות ובלי נושאים.</p><div id="fb-stats"></div></div>

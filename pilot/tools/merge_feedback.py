@@ -36,8 +36,8 @@ for f in files:
 if not fbs:
     sys.exit(f"no feedback files in {folder}")
 
-MODE = {"private": "בלי הדוח", "full": "עם הטעויות"}
-VERDICT = {"correct": "נכון", "wrong": "לא נכון", "unsure": "לא יודע/ת"}
+MODE = {"private": "בלי הדוח", "full": "עם הדוח"}
+VERDICT = {"correct": "נכון", "wrong": "לא נכון", "unsure": "לא יודע/ת", "comment": "הערה"}
 KIND = {"missed": "חסר", "invented": "לא קיים", "inaccurate": "לא מדויק"}
 OUTCOME = {"found": "נמצא", "none": "לא נמצא", "na": "לא נבדק"}
 
@@ -51,7 +51,7 @@ acc = wb.active
 acc.title = "accuracy"
 acc.sheet_view.rightToLeft = True
 acc.append(["שורה", "ענו", "נכון", "לא נכון", "לא יודע/ת", "דיוק %", "חסר", "לא קיים", "לא מדויק", "טעות בלי פירוט"])
-rows: dict[str, dict] = defaultdict(lambda: {"label": "", "correct": 0, "wrong": 0, "unsure": 0, "kinds": defaultdict(int)})
+rows: dict[str, dict] = defaultdict(lambda: {"label": "", "correct": 0, "wrong": 0, "unsure": 0, "comment": 0, "kinds": defaultdict(int)})
 for d in fbs:
     for v in d["verdicts"]:
         r = rows[v["key"]]
