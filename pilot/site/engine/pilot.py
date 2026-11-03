@@ -443,8 +443,8 @@ def run(payload_json: str) -> str:
 
     portrait = []
 
-    def say(label, text, join=None):
-        portrait.append({"label": label, "text": text, **({"join": join} if join else {})})
+    def say(label, text, join=None, url=None):
+        portrait.append({"label": label, "text": text, **({"join": join} if join else {}), **({"url": url} if url else {})})
 
     if r := has("עיר מגורים לפי חשבונות"):
         say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
@@ -497,7 +497,7 @@ def run(payload_json: str) -> str:
             say(label, label, join="תחומי עניין")
     for label, r in plat_rows:
         if r.get("link"):
-            say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת")
+            say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת", url=r["link"])
     for m in out.get("mentions") or []:
         if re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
             say("אזכורים ברשת", f"אזכור ברשת, לפי השם בלבד: {m['text']}.")
@@ -505,6 +505,18 @@ def run(payload_json: str) -> str:
         say("רישיונות במאגרים ציבוריים", f"במאגרים הציבוריים, לפי השם בלבד: {r['v']}.")
     if r := has("חברות על השם שלך"):
         say("חברות על השם שלך", f"ברשם החברות, לפי השם בלבד: {r['v']}.")
+
+    topics = {"מגורים": ("עיר מגורים לפי חשבונות", "גר/ה שם", "עדכון כתובת ברשות האוכלוסין", "מיילים על מעבר מגורים", "משכנתא",
+                         "מיילים על רכישת נכס", "חשבונות שוטפים: חשמל, גז, מים, תקשורת"),
+              "עבודה ולימודים": ("מעסיק לפי מיילים", "ותק לפי מיילים מהמעסיק", "היקף משרה", "מוסד אקדמי בתיבה",
+                                 "מיילים ששלחת על חוזים", "קורסים, כנסים והרצאות"),
+              "כספים": ("חיסכון פנסיוני פעיל", "מיילים על הוראות קבע", alerts, "הקשר הארוך ביותר עם ספק", problems),
+              "פנאי": ("יעדי טיסה",)}
+    for x in portrait:
+        x["topic"] = next((t for t, labels in topics.items() if x["label"] in labels),
+                          "פנאי" if x.get("join") == "תחומי עניין" else "ברשת")
+    # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name
+    ai_facts = [{"label": x["label"], "text": x["text"]} for x in portrait if x["topic"] != "ברשת"]
 
     # ---- what the AI paragraph may see: subjects from businesses only, with whatever identifies someone taken out. `readable`
     # already leaves out personal senders and excluded sectors. A stranger's name inside a subject can't be recognised here
@@ -560,7 +572,7 @@ def run(payload_json: str) -> str:
     return json.dumps({
         "rule_version": rules["version"], "today": today, "stats": stats,
         "groups": [{"title": t, "params": [{"label": l, **r, **row_meta(l, r)} for l, r in rows]} for t, rows in groups],
-        "portrait": portrait, "ai_input": ai_input,
+        "portrait": portrait, "ai_input": ai_input, "ai_facts": ai_facts,
         "suppliers": [{"org_he": e.org_he, "first": ym(e.first), "last": ym(e.last), "months": e.months_active,
                        "active": e.status == "active", "holder": holder_he[e.holder]}
                       for e in sorted(rel, key=lambda e: -e.months_active)],

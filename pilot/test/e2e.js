@@ -105,9 +105,13 @@ async function run(browser, mode) {
     r.fulfill({ body: fs.readFileSync(f), contentType: type, headers: { "access-control-allow-origin": "*" } });
   });
   // the mail script: the full mode fails once first, to prove the answers survive a failed send
-  const posts = [], searches = [], registryCalls = [], aiCalls = [];
+  const posts = [], searches = [], registryCalls = [], aiCalls = [], employerSearches = [];
   await ctx.route("https://data.gov.il/**", (r) => {
     registryCalls.push(r.request().url());
+    const url = decodeURIComponent(r.request().url());
+    if (url.includes("f004176c") && url.includes("חברת דוגמה")) {
+      return r.fulfill({ body: JSON.stringify({ result: { records: [{ "שם חברה": 'חברת דוגמה בע"מ', "מספר חברה": "512", "סטטוס חברה": "פעילה", "תאריך התאגדות": "01/02/2005", "שם עיר": "תל אביב" }] } }), contentType: "application/json", headers: { "access-control-allow-origin": "*" } });
+    }
     const own = r.request().url().includes("f004176c"); // the company registry
     const [first, ...rest] = OWNER_HE.split(" ");
     const records = own ? [{ "שם חברה": `${first} ${rest.join(" ")} בע"מ`, "מספר חברה": "515", "סטטוס חברה": "פעילה", "שם עיר": "חיפה" }] : [];
@@ -118,13 +122,25 @@ async function run(browser, mode) {
     const headers = { "access-control-allow-origin": "*" };
     if (JSON.parse(r.request().postData()).kind === "imtrustme-ai") {
       aiCalls.push(r.request().postData());
-      return r.fulfill({ body: JSON.stringify({ ok: true, sentences: [
+      const lines = JSON.parse(r.request().postData()).items;
+      return r.fulfill({ body: JSON.stringify({ ok: true, summary: [
+        { topic: "עבודה", text: "עבודה בהיקף חלקי.", sources: [lines.findIndex((x) => x[2].includes("80%"))] },
+        { topic: "מגורים", text: "מעבר מגורים לאחרונה.", sources: [lines.findIndex((x) => x[2].includes("עדכון כתובת"))] },
+      ], sentences: [
         { text: "מיילים על משכנתא ומעבר מגורים באותה תקופה.", sources: [0, 1] },
         { text: "אדם אמין ויסודי.", sources: [0] },
         { text: "משפט בלי מקור.", sources: [] },
       ] }), contentType: "application/json", headers });
     }
     if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
+      const asked = JSON.parse(r.request().postData()).queries;
+      if (asked.join(" ").includes("חברת דוגמה")) {
+        employerSearches.push(asked);
+        return r.fulfill({ body: JSON.stringify({ ok: true, results: [
+          { title: "חברת דוגמה | דף הבית", link: "https://www.dugma-example.co.il/about?x=1", snippet: "חברת דוגמה עוסקת בתקשורת" },
+          { title: "חברת דוגמה | LinkedIn", link: "https://il.linkedin.com/company/dugma-example", snippet: "" },
+        ] }), contentType: "application/json", headers });
+      }
       searches.push(r.request().postData());
       return r.fulfill({ body: JSON.stringify({ ok: true, results: [
         { title: `${OWNER_HE} מרצה בכנס`, link: "https://news-example.co.il/a#top", snippet: "" },
@@ -323,10 +339,23 @@ async function run(browser, mode) {
     assert.strictEqual(aiCalls.length, 1, "AI calls");
     for (const secret of [OWNER_HE, HH_NAME, ME, "123456789", "me@x.com", "partner@example.com"]) assert(!aiCalls[0].includes(secret), "leaked to AI: " + secret);
     assert(aiCalls[0].includes("נסח טאבו"), "subjects must reach the AI");
-    assert(!/[0-9]/.test(JSON.stringify(JSON.parse(aiCalls[0]).items.map((x) => x[2]))), "digits in a subject sent to AI");
+    assert(!/[0-9]/.test(JSON.stringify(JSON.parse(aiCalls[0]).items.filter((x) => x[0]).map((x) => x[2]))), "digits in a subject sent to AI");
+    // the top of the report: conclusions by topic, the workplace, and real links
+    const top = await page.textContent("#rev-portrait .portrait-top");
+    assert(top.includes("עבודה בהיקף חלקי") && top.includes("התאגדה ב-2005"), "the conclusions on top: " + top);
+    const hrefs = await page.$$eval("#rev-portrait .portrait-links a", (a) => a.map((x) => x.href));
+    assert(hrefs.includes("https://www.dugma-example.co.il/"), "the employer's site: " + hrefs);
+    assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
+    assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
+    assert.strictEqual(employerSearches.length, 1, "employer searches");
     assert(!/maccabi|friend@/.test(aiCalls[0]), "an excluded or personal sender went to AI");
     assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
     assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
+    // blacking out a row takes the conclusion built on it, so it can't come back through the AI
+    await page.uncheck(`${row("job_scope")} [data-show]`);
+    assert(!(await page.textContent("#rev-portrait .portrait-top")).includes("עבודה בהיקף חלקי"), "a conclusion outlived its row");
+    await page.check(`${row("job_scope")} [data-show]`);
+    await page.evaluate(() => { const r = rowsOf(AI_SUMMARY)[0]; S.hidden.delete(r.id); refreshRow(r.id); });
     await page.uncheck(`[data-id="${await page.evaluate(() => { const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP); return gi + ".0"; })}"] [data-show]`);
     assert(!(await page.textContent("#rev-portrait")).includes("ומעבר מגורים באותה"), "a struck AI sentence is still in the paragraph");
     await page.check(`[data-id="${await page.evaluate(() => { const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP); return gi + ".0"; })}"] [data-show]`);

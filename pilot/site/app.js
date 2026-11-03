@@ -442,15 +442,16 @@ async function webHits(queries) {
   const reply = await r.json();
   return reply.ok ? reply.results || [] : [];
 }
-async function lookupOutside(city) {
+async function lookupOutside(city, account) {
   const out = { licenses: [], companies: [], mentions: [], web_links: {} };
   if (!$("#web-ok").checked) return out;
-  const nameHe = S.owner.name_he, nameEn = S.owner.name_en;
+  const nameHe = S.owner.name_he;
+  const nameEn = S.owner.name_en || (/^[A-Za-z][A-Za-z.' -]+ [A-Za-z.' -]+$/.test(account || "") ? account.trim() : null);
   const settle = async (p) => { try { return await p; } catch (e) { console.warn("outside lookup failed", e); return []; } };
   const [licenses, companies, hits] = await Promise.all([
     Promise.all(REGISTRIES.map((reg) => settle(registryRows(reg, nameHe, city)))),
     settle(registryRows(COMPANY_REGISTRY, nameHe, city)),
-    settle(webHits([nameHe, nameEn].filter(Boolean).map((n) => `"${n}"`))),
+    settle(webHits([`"${nameHe}"`, nameEn && `"${nameEn}"`, `site:linkedin.com/in "${nameEn || nameHe}"`].filter(Boolean))),
   ]);
   out.licenses = licenses.flat();
   out.companies = companies;
@@ -641,7 +642,7 @@ async function readMailbox() {
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
   const readOut = await readRelevant(search, pool, drop, senders).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
-  const outside = await lookupOutside(readOut.city?.name || "").catch((e) => { console.warn("outside lookup stopped", e); return {}; });
+  const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
   stage("read", "done", fmtN(total - pending.size));
@@ -693,6 +694,7 @@ async function readMailbox() {
       });
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
+      await lookupEmployer(last.r).catch((e) => console.warn("employer lookup stopped", e));
       await askAi(last.r).catch((e) => console.warn("AI paragraph stopped", e));
       applyFinal(last.r);
     } catch (e) {
@@ -718,6 +720,7 @@ function showBackground(done, total) {
 // The final run replaces the report. Answers follow their row by its key, since rows can appear and move, and an answer
 // on a value that has since changed is dropped: it was about something else
 function applyFinal(r) {
+  attachEmployer(r);
   attachAi(r);
   const index = (res) => {
     const m = new Map();
@@ -791,11 +794,42 @@ const evText = (p) => {
   return bits.join(" · ");
 };
 // A profile link. Rebuilt from a checked name in readRelevant, and escaped here as well
-const valHtml = (p) => (p.links ? p.links.filter((l) => /^https:\/\//.test(l.url)).map((l) => `<a class="row-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("") : p.link && /^https:\/\//.test(p.link)
+const valHtml = (p) => (p.links ? (p.lead ? `${esc(p.lead)}<br>` : "") + p.links.filter((l) => /^https:\/\//.test(l.url)).map((l) => `<a class="row-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("") : p.link && /^https:\/\//.test(p.link)
   ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
 const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
+// ---------------------------------------------------------------- the workplace
+// Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
+const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
+async function lookupEmployer(r) {
+  if (!$("#web-ok").checked) return;
+  const row = r.groups.flatMap((g) => g.params).find((p) => p.key === "employer");
+  if (!row || row.outcome !== "found" || (row.note || "").includes("שולח")) return;
+  const name = String(row.v);
+  const settle = async (p) => { try { return await p; } catch (e) { console.warn("employer lookup failed", e); return []; } };
+  const [records, hits] = await Promise.all([
+    settle(fetch(`${REGISTRY_API}?resource_id=${COMPANY_REGISTRY.id}&limit=50&q=${encodeURIComponent(name)}`).then((x) => x.json()).then((x) => x.result?.records || [])),
+    settle(webHits([`"${name}"`])),
+  ]);
+  const record = records.find((x) => dropCompanyWords(x["שם חברה"]) === dropCompanyWords(name));
+  const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
+  const clean = (u) => String(u || "").split(/[?#]/)[0];
+  const linkedin = hits.map((h) => clean(h.link)).find((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/.test(u));
+  const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !/linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il/.test(new URL(h.link).hostname) &&
+    nameWords(h.title).some((w) => nameWords(name).includes(w)));
+  const lead = record ? [`${record["סטטוס חברה"]}`, year && `התאגדה ב-${year}`, record["שם עיר"]].filter(Boolean).join(", ") : "";
+  const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, linkedin && { text: `${name} ב-LinkedIn`, url: linkedin }].filter(Boolean);
+  if (!lead && !links.length) return;
+  S.employer = { name, lead, links, snippet: String(site?.snippet || "").slice(0, 180) };
+}
+function attachEmployer(r) {
+  if (!S.employer || r.groups.some((g) => g.title === "מקום העבודה")) return;
+  const { name, lead, links } = S.employer;
+  r.groups.push({ title: "מקום העבודה", params: [{ label: `על ${name}`, v: [lead, ...links.map((l) => l.url)].filter(Boolean).join(" · "), lead, links, n: null, span: "", why: null,
+    note: "מרשם החברות ומחיפוש ברשת", key: "employer_about", fb_label: "על מקום העבודה", detail: false, private: false, outcome: "found" }] });
+}
+
 // ---------------------------------------------------------------- the AI paragraph
 // Only with the box ticked. The engine prepares the subjects (no digits, no addresses, no names it knows, no personal
 // or excluded senders); nothing else goes out, and the participant's name is not sent. Each sentence becomes a report row
@@ -811,44 +845,83 @@ const AI_TOPICS = [
   'subject:(התנדבות OR מילואים OR הרצאה OR כנס OR conference)',
   'in:sent subject:(חוזה OR הסכם OR משכנתא OR "מעבר דירה" OR ביטוח)',
 ];
-const AI_GROUP = "מה AI הבין מהנושאים";
+const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה";
 const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
 async function askAi(r) {
   if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
+  // Facts from the report come first, so a sentence built on one can be taken down when its row is blacked out
+  const facts = (r.ai_facts || []).map((x) => ({ label: x.label, line: ["", "עובדה מהדוח", x.text.slice(0, 190)] }));
+  if (S.employer?.snippet) facts.push({ label: null, line: ["", "על מקום העבודה", `${S.employer.name}: ${S.employer.snippet}`.slice(0, 190)] });
+  const items = [...facts.map((x) => x.line), ...r.ai_input.map((x) => [x.d, x.o, x.s])];
   const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(90000),
-    body: JSON.stringify({ kind: "imtrustme-ai", items: r.ai_input.map((x) => [x.d, x.o, x.s]) }) }).then((x) => x.json());
+    body: JSON.stringify({ kind: "imtrustme-ai", items }) }).then((x) => x.json());
   if (!reply.ok) { console.warn("AI paragraph not written:", reply.error); return; }
-  S.ai = (reply.sentences || []).filter((x) => typeof x.text === "string" && x.text.length <= 220 && !AI_BLOCKED.test(x.text) &&
-    Array.isArray(x.sources) && x.sources.length && x.sources.every((i) => Number.isInteger(i) && i >= 0 && i < r.ai_input.length)).slice(0, 12);
-  S.run.ai_sentences = S.ai.length;
+  const valid = (x) => typeof x.text === "string" && x.text.length <= 220 && !AI_BLOCKED.test(x.text) &&
+    Array.isArray(x.sources) && x.sources.length && x.sources.every((i) => Number.isInteger(i) && i >= 0 && i < items.length);
+  const withLabels = (x) => ({ ...x, labels: x.sources.map((i) => facts[i]?.label).filter(Boolean) });
+  S.ai = (reply.sentences || []).filter(valid).slice(0, 12).map(withLabels);
+  S.aiSummary = (reply.summary || []).filter(valid).filter((x) => typeof x.topic === "string" && x.topic.length <= 30).slice(0, 6).map(withLabels);
+  S.run.ai_sentences = S.ai.length + S.aiSummary.length;
 }
 function attachAi(r) {
-  if (!S.ai?.length || r.groups.some((g) => g.title === AI_GROUP)) return;
-  r.groups.push({ title: AI_GROUP, params: S.ai.map((x, i) => ({ label: `משפט ${i + 1}`, v: x.text, n: x.sources.length, span: "", why: null,
-    note: "נכתב על ידי AI מנושאי מיילים, ייתכנו טעויות", key: `ai_${i}`, fb_label: `משפט AI ${i + 1}`, detail: false, private: false, outcome: "found" })) });
+  const row = (x, i, prefix, label) => ({ label, v: x.text, n: x.sources.length, span: "", why: null, note: "נכתב על ידי AI, ייתכנו טעויות", source_labels: x.labels,
+    key: `${prefix}_${i}`, fb_label: `משפט AI ${prefix} ${i + 1}`, detail: false, private: false, outcome: "found" });
+  if (S.aiSummary?.length && !r.groups.some((g) => g.title === AI_SUMMARY)) r.groups.push({ title: AI_SUMMARY, params: S.aiSummary.map((x, i) => row(x, i, "ai_summary", x.topic)) });
+  if (S.ai?.length && !r.groups.some((g) => g.title === AI_GROUP)) r.groups.push({ title: AI_GROUP, params: S.ai.map((x, i) => row(x, i, "ai", `משפט ${i + 1}`)) });
 }
-function aiText() {
-  const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP);
-  return gi < 0 ? "" : S.result.groups[gi].params.filter((_, pi) => !isHidden(`${gi}.${pi}`)).map((p) => p.v).join(" ");
+const rowsOf = (title) => { const gi = S.result.groups.findIndex((g) => g.title === title); return gi < 0 ? [] : S.result.groups[gi].params.map((p, pi) => ({ p, id: `${gi}.${pi}` })); };
+const visibleRows = (title) => rowsOf(title).filter(({ id }) => !isHidden(id)).map(({ p }) => p);
+const aiText = () => visibleRows(AI_GROUP).map((p) => p.v).join(" ");
+// A sentence built on a row goes when that row is blacked out, so nothing comes back through the AI
+function followBlackouts() {
+  if (!S.hidden) return;
+  const ids = {};
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
+  for (const title of [AI_SUMMARY, AI_GROUP]) for (const { p, id } of rowsOf(title)) {
+    if (!S.hidden.has(id) && (p.source_labels || []).some((l) => S.hidden.has(ids[l]))) { S.hidden.add(id); refreshRow(id); }
+  }
+}
+// The links shown at the top: only for rows still visible
+function topLinks() {
+  const out = [];
+  const ids = {};
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
+  for (const x of S.result.portrait || []) if (x.url && !isHidden(ids[x.label])) out.push({ text: x.label, url: x.url });
+  const employer = rowsOf("מקום העבודה")[0];
+  if (employer && !isHidden(employer.id)) out.push(...employer.p.links);
+  return out.filter((l) => /^https:\/\//.test(l.url));
+}
+function summaryLines() {
+  const summary = visibleRows(AI_SUMMARY).map((p) => ({ topic: p.label, text: p.v }));
+  const employer = rowsOf("מקום העבודה")[0];
+  if (employer && !isHidden(employer.id) && employer.p.lead) summary.push({ topic: employer.p.label, text: employer.p.lead });
+  return summary;
 }
 
 // The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
-function portraitText() {
+function portraitLines() {
   const ids = {};
   S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
-  const parts = [], lists = {};
+  const topics = new Map();
   for (const x of S.result.portrait || []) {
     if (isHidden(ids[x.label])) continue;
-    if (!x.join) { parts.push(x.text); continue; }
-    if (!lists[x.join]) { lists[x.join] = []; parts.push(lists[x.join]); lists[x.join].title = x.join; }
-    lists[x.join].push(x.text);
+    if (!topics.has(x.topic)) topics.set(x.topic, { plain: [], lists: new Map() });
+    const t = topics.get(x.topic);
+    if (!x.join) t.plain.push(x.text);
+    else { if (!t.lists.has(x.join)) t.lists.set(x.join, []); t.lists.get(x.join).push(x.text); }
   }
-  return parts.map((p) => (Array.isArray(p) ? `${p.title}: ${p.join(", ")}.` : p)).join(" ");
+  return [...topics].map(([topic, t]) => ({ topic, text: [...t.plain, ...[...t.lists].map(([k, v]) => `${k}: ${v.join(", ")}.`)].join(" ") }));
 }
+const portraitText = () => portraitLines().map((l) => l.text).join(" ");
 function showPortrait(card) {
-  const text = portraitText(), ai = aiText();
-  $(`${card}`).hidden = !text && !ai;
-  $(`${card} .portrait-text`).textContent = text;
+  const lines = portraitLines(), summary = summaryLines(), ai = aiText(), links = topLinks();
+  const line = (l) => `<div class="p-line"><span>${esc(l.topic)}</span><div>${esc(l.text)}</div></div>`;
+  // The conclusions go on top. Without them, the facts by topic take that place
+  $(`${card}`).hidden = !lines.length && !summary.length && !ai;
+  $(`${card} .portrait-top`).innerHTML = (summary.length ? summary : lines).map(line).join("");
+  $(`${card} .portrait-links`).innerHTML = links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("");
+  $(`${card} .portrait-more`).hidden = !summary.length && !ai;
+  $(`${card} .portrait-text`).innerHTML = summary.length ? lines.map(line).join("") : "";
   $(`${card} .portrait-ai`).hidden = !ai;
   $(`${card} .portrait-ai-text`).textContent = ai;
 }
@@ -940,6 +1013,7 @@ function reviewRow(id) {
 }
 
 function reviewCount() {
+  followBlackouts();
   showPortrait("#rev-portrait");
   const all = $$("#rev-groups .rv-row").length, off = S.hidden.size;
   $("#rev-count").textContent = `${all - off} גלויות · ${off} מושחרות`;
@@ -1091,6 +1165,8 @@ function reportRecord() {
     minor: extra("m", r.minor, (m) => ({ org: m.org_he, text: minorText(m) })),
     hidden_rows: S.hidden.size,
     portrait: portraitText(),
+    summary: summaryLines(),
+    links: topLinks(),
   };
 }
 function statsRecord() {

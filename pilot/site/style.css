@@ -167,7 +167,17 @@ textarea { min-height: 84px; resize: vertical; }
 .web-ok input { width: 20px; height: 20px; accent-color: var(--tq); margin-top: 3px; }
 .row-link { display: block; margin-bottom: 4px; }
 
-.portrait-text, .portrait-ai-text { font-size: 18px; line-height: 1.7; margin: 6px 0 10px; }
+.p-line { display: grid; grid-template-columns: 118px 1fr; gap: 12px; padding: 11px 0; border-bottom: 1px solid #e3eeee; font-size: 16px; line-height: 1.55; }
+.p-line:last-child { border-bottom: 0; }
+.p-line > span { color: var(--tq); font-weight: 700; font-size: 14px; padding-top: 2px; }
+.portrait-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.portrait-links:empty { display: none; }
+.portrait-links a { padding: 5px 12px; border: 1px solid var(--tq); border-radius: 999px; font-size: 14px; text-decoration: none; }
+.portrait-more { margin-top: 12px; font-size: 14px; }
+.portrait-more summary { cursor: pointer; color: var(--tq); font-weight: 700; }
+.portrait-more[hidden] { display: none; }
+.portrait-ai-text { line-height: 1.7; margin: 6px 0 10px; }
+@media (max-width: 480px) { .p-line { grid-template-columns: 1fr; gap: 2px; } }
 
 /* the numbers people came for */
 .hero { background: var(--tq-soft); border-color: var(--tq-line); }
