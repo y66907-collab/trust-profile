@@ -55,6 +55,7 @@ function fixture() {
   add(91, "", "פרטי משכנתא", true);
   add(92, "", "תיאום טכנאי אחרי מעבר דירה", true);
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
+  for (let m = 0; m < 3; m++) add(100 + 30 * m, "billing@sender.netfree.link", "החשבונית החודשית שלך");
   add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
   return out;
 }
@@ -247,6 +248,7 @@ async function run(browser, mode) {
       for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "הוראת קבע", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "התכתבות אישית על משכנתא", "מעבר מגורים", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
       assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
       console.log("paragraph:", para);
+      assert(!/נטפרי|netfree/i.test(await page.evaluate(() => JSON.stringify([S.result.groups, S.result.suppliers, S.result.unknown, S.result.ai_input]))), "a filtering provider reveals religious observance");
       assert.strictEqual(await page.locator("#rep-groups .group").count() > 3, true, "the report rows must stay under the paragraph");
     } else {
       assert.strictEqual(searches.length + registryCalls.length, 0, "the name went out with the box unticked");
