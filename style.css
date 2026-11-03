@@ -173,6 +173,7 @@ textarea { min-height: 84px; resize: vertical; }
 .portrait-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
 .portrait-links:empty { display: none; }
 .portrait-links a { padding: 5px 12px; border: 1px solid var(--tq); border-radius: 999px; font-size: 14px; text-decoration: none; }
+.portrait-wait { color: var(--tq); font-weight: 700; margin: 6px 0 10px; }
 .portrait-more { margin-top: 12px; font-size: 14px; }
 .portrait-more summary { cursor: pointer; color: var(--tq); font-weight: 700; }
 .portrait-more[hidden] { display: none; }
