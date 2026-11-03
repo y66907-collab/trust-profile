@@ -31,6 +31,8 @@ const LIFE_QUERIES = {
   contracts: "subject:(חוזה OR הסכם OR contract OR agreement)",
   contracts_sent: "in:sent subject:(חוזה OR הסכם OR contract OR agreement)",
   standing_orders: 'subject:"הוראת קבע"',
+  moving: 'subject:"מעבר דירה"',
+  property_docs: 'subject:("נסח טאבו" OR "הסכם מכר" OR "חוזה מכר" OR "מס רכישה" OR "רישום זכויות")',
   disputes: "in:sent subject:(ערעור OR השגה OR תלונה OR complaint)",
   thanks: "from:gmail.com subject:תודה",
   security: "subject:(\"התראת אבטחה\" OR \"security alert\" OR \"new sign-in\" OR \"כניסה חדשה\")",

@@ -51,6 +51,10 @@ function fixture() {
   for (let m = 0; m < 3; m++) add(50 + m, "office@campus-example.ac.il", "מערכת שעות");
   add(70, "billing@bezeq.co.il", "אישור הוראת קבע");
   for (let m = 0; m < 2; m++) add(80 + m, "", "הערות לחוזה", true);
+  add(90, "donotreply@gov.il", "שינוי כתובת מגורים (מען) - 12345");
+  add(91, "", "פרטי משכנתא", true);
+  add(92, "", "תיאום טכנאי אחרי מעבר דירה", true);
+  add(93, "office@lawyer-example.co.il", "נסח טאבו");
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
@@ -231,8 +235,9 @@ async function run(browser, mode) {
       assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
       // the paragraph is added above the report; it says what the rows say and nothing about who the person is
       const para = await page.evaluate(() => portraitText());
-      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "הוראת קבע", "חוזים והסכמים", "אלופת ישראל בקרוספיט"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
+      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "הוראת קבע", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "התכתבות אישית על משכנתא", "מעבר מגורים", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
       assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
+      console.log("paragraph:", para);
       assert.strictEqual(await page.locator("#rep-groups .group").count() > 3, true, "the report rows must stay under the paragraph");
     } else {
       assert.strictEqual(searches.length + registryCalls.length, 0, "the name went out with the box unticked");
