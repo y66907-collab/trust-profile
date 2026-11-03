@@ -32,6 +32,39 @@ SENSITIVE = re.compile(r"תרומ|ישיב|קהיל|בית כנסת|בית הכ�
 PENSION = re.compile(r'דו"?ח ה?(רבעוני|תקופתי|שנתי).*(פנסיה|גמל|השתלמות)')
 
 
+# Stable key of each report row, for the feedback and for merging across participants
+ROW_KEYS = {
+    "עיר מגורים לפי חשבונות": "city", "גר/ה שם": "residence_since",
+    "חשבונות שוטפים: חשמל, גז, מים, תקשורת": "utility_accounts", "עדכון כתובת ברשות האוכלוסין": "address_update",
+    "ספקים בתשלום קבוע (6 חודשים ומעלה)": "regular_suppliers", "ספקים לאורך שנתיים ומעלה": "long_suppliers",
+    "הקשר הארוך ביותר עם ספק": "longest_supplier", "בעיות תשלום מהותיות ב-12 החודשים האחרונים": "payment_issues_12m",
+    "בעיות תשלום מהותיות בכל התקופה": "payment_issues_all", "אירועי תשלום זניחים": "minor_payment_events",
+    "התראות גבייה": "collection_notices", "הליך משפטי, הוצאה לפועל או עיקול": "legal",
+    "התראות בנק: חשבון מוגבל, שיק חזר, חריגה": "bank_alerts", "הלוואות": "loans", "בנק לפי מיילים": "bank",
+    "מעסיק לפי מיילים": "employer", "תלושי שכר שהגיעו במייל": "payslips", "חיסכון פנסיוני פעיל": "pension",
+    "משכנתא": "mortgage", "חשבון ה-Gmail שחובר": "gmail_account", "גיל תיבת המייל": "mailbox_age",
+    "חשבונות על שמך": "own_accounts",
+}
+# Allow-list: rows where saying what kind of mistake it was reveals nothing personal. Any other row, including
+# one added later, sends a bare answer when the report isn't shared ("missing" on a legal row would say there is a case)
+DETAIL_OK = {"city", "residence_since", "utility_accounts", "address_update", "regular_suppliers", "long_suppliers",
+             "longest_supplier", "bank", "gmail_account", "mailbox_age", "own_accounts"}
+NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
+
+
+def row_meta(label: str, r: dict) -> dict:
+    """Rows that exist only for some people (household, platforms) reveal something by appearing, so they are not
+    asked when the report isn't shared. An unknown label raises: a new row has to be classified."""
+    outcome = "na" if r["v"] is None else "none" if r["v"] in NOTHING_FOUND else "found"
+    if label.startswith("חשבונות על שם "):
+        return {"key": "household_accounts", "fb_label": "חשבונות על שם בן/בת הבית", "detail": False,
+                "private": False, "outcome": outcome}
+    if label in {name for name, _ in PLATFORMS}:
+        return {"key": "platform_" + label.lower(), "fb_label": label, "detail": False, "private": False, "outcome": outcome}
+    key = ROW_KEYS[label]
+    return {"key": key, "fb_label": label, "detail": key in DETAIL_OK, "private": True, "outcome": outcome}
+
+
 def ym(d: str) -> str:
     return f"{d[5:7]}.{d[:4]}"
 
@@ -216,14 +249,12 @@ def run(payload_json: str) -> str:
             ("התראות בנק: חשבון מוגבל, שיק חזר, חריגה", sig(rules["signals"]["bank_alerts"]["subject"])),
             ("הלוואות", sig(rules["signals"]["loan"]["subject"])),
             ("בנק לפי מיילים", P(", ".join(bank_names) if banks else "לא זוהה", banks)),
-            ("שכר דירה קודם", NA("לא נבדק בפיילוט. משלימים מהמשכיר הקודם")),
         ]),
         ("עבודה והכנסה", [
             ("מעסיק לפי מיילים", P(employer[0].org_he, employer) if employer else
              (P(", ".join(k for k, _ in slip_from.most_common(2)), slips, note="לפי שולח התלושים") if slips
               else NA("המעסיק לא מוכר עדיין למנוע"))),
             ("תלושי שכר שהגיעו במייל", P(len(slips), slips)),
-            ("הכנסה ביחס לשכר הדירה", NA("לא נבדק בפיילוט. תלושים מגיעים כ-PDF נעול")),
             ("חיסכון פנסיוני פעיל",
              P(f"כן ({', '.join(sorted({m.org_he or m.domain for m in pension}))})" if pension else 0, pension)),
         ]),
@@ -240,12 +271,6 @@ def run(payload_json: str) -> str:
         ] + ([("חשבונות על שם " + hh["name"],
                P(", ".join(e.org_he for e in hh_rels) or 0, ep_msgs(hh_rels), note="חשבון משותף לפי הצהרתך"))]
              if hh else []) + plat_rows),
-    ]
-    not_checked = [
-        ("תעודה מול סלפי", "שלב התעודה לא נכלל בפיילוט"),
-        ("בנק ישראל, חדלות פירעון", "נבדקים לפי מספר זהות מהתעודה. לא בפיילוט"),
-        ("חיפוש ברשת", "לא בפיילוט"),
-        ("משכיר קודם (ממליץ)", "לא בפיילוט"),
     ]
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
@@ -275,10 +300,9 @@ def run(payload_json: str) -> str:
     }
     return json.dumps({
         "rule_version": rules["version"], "today": today, "stats": stats,
-        "groups": [{"title": t, "params": [{"label": l, **r} for l, r in rows]} for t, rows in groups],
+        "groups": [{"title": t, "params": [{"label": l, **r, **row_meta(l, r)} for l, r in rows]} for t, rows in groups],
         "minor": [{"org_he": e.org_he, "first": e.first, "last": e.last, "n_in": e.n_in, "level": e.max_level}
                   for e in minor],
-        "not_checked": [{"label": l, "why": w} for l, w in not_checked],
         "unknown": [{"domain": t["domain"], "skeleton": scrub(t["skeleton"]), "count": t["count"],
                      "registered": t["domain"] in registered_doms} for t in unknown],
     }, ensure_ascii=False)
