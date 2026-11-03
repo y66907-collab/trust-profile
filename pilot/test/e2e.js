@@ -38,9 +38,18 @@ function fixture() {
     a.ts = q.ts + 30 * 60000; a.id = (BigInt(a.ts) << 20n).toString(16); a.thread = q.thread;
   }
   add(100, "hr@acme-example.com", "זימון לראיון עבודה");
+  // mail that is read: a contract in two mails and a PDF, an excluded sender, payslips, a flight, and network mail
+  const last = () => out[out.length - 1];
+  for (let m = 0; m < 2; m++) { add(15 + m, "office@lawyer-example.co.il", "חוזה לחתימה"); last().body = "כתובת הנכס: רחוב הרצל 5, המושכר נמצא בעיר חיפה"; }
+  add(19, "office@lawyer-example.co.il", "הסכם שנתי"); last().pdf = true;
+  add(21, "care@maccabi4u.co.il", "הסכם טיפול"); last().body = "המושכר בעיר אילת";
+  for (let m = 0; m < 2; m++) { add(30 * m + 11, "hr@payroll-example.co.il", "תלוש שכר"); last().body = "שם המעסיק: חברת דוגמה\nשכר ברוטו 12345"; }
+  add(25, "tickets@air-example.com", "כרטיס טיסה"); last().body = "TLV to Athens, seat 12A";
+  for (let m = 0; m < 5; m++) { add(3 + m, "messages-noreply@linkedin.com", "הודעה חדשה"); last().html = '<a href="https://il.linkedin.com/comm/in/test-owner?midToken=secrettoken&amp;trk=eml-header-0-profile_glimmer">me</a><a href="https://il.linkedin.com/comm/in/other-person?trk=eml-ProfileCard-0-profile_name">them</a>'; }
   for (let m = 0; m < 4; m++) add(30 * m + 8, "billing@saasco.io", "קבלה על התשלום");
   return out;
 }
+const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
 const rowsFile = path.join(__dirname, "rows.json");
 const rows = fs.existsSync(rowsFile) ? JSON.parse(fs.readFileSync(rowsFile, "utf8")) : fixture();
 const byId = new Map(rows.map((r) => [r.id, r]));
@@ -53,7 +62,7 @@ function matches(x, q) {
     const v = val.replace(/^["(]|[")]$/g, "").toLowerCase();
     if (field === "from" && !x.from.toLowerCase().includes(v)) return false;
     if (field === "to" && !x.to.toLowerCase().includes(v)) return false;
-    if (field === "subject" && !v.split(" or ").some((w) => subj.includes(w.trim()))) return false;
+    if (field === "subject" && !v.split(" or ").some((w) => subj.includes(w.trim().replace(/"/g, "")))) return false;
   }
   return !q.includes("in:sent") || x.sent;
 }
@@ -94,7 +103,7 @@ async function run(browser, mode) {
     posts.push(r.request().postData());
     r.fulfill({ body: '{"ok":true}', contentType: "application/json", headers });
   });
-  let gets = 0, promoRead = 0, lists = 0;
+  let gets = 0, promoRead = 0, lists = 0, bodyGets = 0;
   await ctx.route("https://gmail.googleapis.com/**", (r) => {
     const u = new URL(r.request().url());
     const json = (o) => r.fulfill({ body: JSON.stringify(o), contentType: "application/json", headers: { "access-control-allow-origin": "*" } });
@@ -110,8 +119,19 @@ async function run(browser, mode) {
       const all = sorted.map((x) => ({ id: x.id, threadId: x.thread })).concat(label || q ? [] : old);
       return json({ messages: all.slice(start, start + 500), nextPageToken: start + 500 < all.length ? String(start + 500) : undefined });
     }
+    if (u.pathname.includes("/attachments/")) return json({ data: Buffer.from(TEST_PDF).toString("base64url") });
     const id = u.pathname.split("/").pop();
     const x = byId.get(id);
+    if (u.searchParams.get("format") === "full") {
+      bodyGets++;
+      if (x.promo) promoRead++;
+      const b64 = (t) => Buffer.from(t).toString("base64url");
+      const parts = [];
+      if (x.body) parts.push({ mimeType: "text/plain", body: { data: b64(x.body) } });
+      if (x.html) parts.push({ mimeType: "text/html", body: { data: b64(x.html) } });
+      if (x.pdf) parts.push({ mimeType: "application/pdf", filename: "a.pdf", body: { attachmentId: "att1", size: TEST_PDF.length } });
+      return json({ id, threadId: x.thread, labelIds: ["INBOX"], payload: { mimeType: "multipart/mixed", headers: [{ name: "From", value: x.from || ME }], parts } });
+    }
     if (x.promo) promoRead++;
     gets++;
     if (gets === 2) return r.fulfill({ status: 429, body: "{}", headers: { "access-control-allow-origin": "*" } }); // one rate-limit hit
@@ -170,6 +190,15 @@ async function run(browser, mode) {
     assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
     assert.strictEqual(typeof report.credit_report.v !== "undefined", true, "no credit report row");
     assert.ok(report.addressed_to, "no addressed-to row");
+    // read mail: the city, the employer, destinations and a clean link, and nothing else from the text
+    const all = await page.evaluate(() => JSON.stringify(S.result));
+    assert.strictEqual(report.city.v, "חיפה", "city from the contract: " + JSON.stringify(report.city));
+    assert.strictEqual(report.employer.v, "חברת דוגמה", "employer from the payslips");
+    assert.ok(String(report.destinations.v).includes("אתונה"), "flight destination");
+    assert.strictEqual(report.platform_linkedin.link, "https://www.linkedin.com/in/test-owner", "own profile link");
+    assert.strictEqual(await page.locator('#rep-groups a[href="https://www.linkedin.com/in/test-owner"]').count(), 1, "the link is not on the page");
+    assert.strictEqual(await page.evaluate(() => S.run.pdf_read), 1, "the PDF was not read");
+    for (const leak of ["הרצל", "secrettoken", "other-person", "12345", "אילת", "seat"]) assert(!all.includes(leak), "from the mail's text: " + leak);
     assert.ok(report.reply_time.v.includes("30"), "reply time: " + report.reply_time.v);
     assert.strictEqual(report.reply_time.private, false, "a bonus row must not be asked in the private mode");
     assert.strictEqual(report.job_search.n, 1, "job search count");
@@ -316,8 +345,10 @@ async function run(browser, mode) {
     assert(repRows.find((r) => r.key === "legal")?.value, "a visible sensitive row must carry its value");
     assert(repRows.find((r) => r.key === "job_search"), "a visible finding must be in the report");
     // rows that say something by name alone are gone entirely once blacked out
-    assert(!repRows.some((r) => /^(platform|interest)_|household/.test(r.key)), "a conditional row was sent while blacked out");
-    assert(!fb.verdicts.some((v) => /^(platform|interest)_|household/.test(v.key)), "a conditional answer was sent while blacked out");
+    const dropped = ["interest_travel", "platform_facebook", "household_accounts"];
+    assert(!repRows.some((r) => dropped.includes(r.key)), "a conditional row was sent while blacked out");
+    assert(!fb.verdicts.some((v) => dropped.includes(v.key)), "a conditional answer was sent while blacked out");
+    assert(repRows.find((r) => r.key === "platform_linkedin")?.value.includes("linkedin.com/in/test-owner"), "the profile link is not in the report");
     assert(!text.includes(HH_NAME), "household name in the file");
     assert(!text.includes("booking.com"), "a blacked-out interest shows through the unknown senders");
     // the mail: readable, carries what's visible, and escapes whatever it was sent

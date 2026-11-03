@@ -234,6 +234,161 @@ function stage(k, state, n) {
 const bar = (f) => ($("#bar").style.width = Math.round(f * 100) + "%");
 const fmtN = (n) => n.toLocaleString("he-IL");
 
+// ---------------------------------------------------------------- reading the few mails that need it
+// Most of the mailbox stays unread. These searches pick mail about where someone lives, works and flies, newest first and
+// capped. The text stays in this function: only a city, an employer, destinations and profile links leave it
+const READ_TOPICS = {
+  residence: { q: 'subject:(חוזה OR הסכם OR שכירות OR ארנונה OR עירייה OR "תאגיד המים" OR "חשבון מים")', max: 40, pdf: true },
+  work: { q: 'subject:("תלוש שכר" OR "תלוש משכורת" OR "אישור העסקה" OR "טופס 106" OR payslip)', max: 15, pdf: true },
+  flights: { q: 'subject:(טיסה OR "boarding pass" OR itinerary OR "כרטיס טיסה")', max: 25, pdf: false },
+};
+const SOCIAL = [
+  ["LinkedIn", "from:linkedin.com", /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/comm\/in\/([A-Za-z0-9%_-]+)\?[^"'\s]*trk=[^"'\s]*header-0-profile_glimmer/, (u) => `https://www.linkedin.com/in/${u}`],
+  ["Instagram", "from:instagram.com", /instagram\.com\/_n\/user\?[^"']*?username=([A-Za-z0-9._]+)[^"']*?click_source=(?:header|footer)_profile_pic/, (u) => `https://www.instagram.com/${u}`],
+  ["Facebook", "from:facebookmail.com", /facebook\.com\/nd\/\?(\d{8,})&[^"']*lloc=logo/, (u) => `https://www.facebook.com/profile.php?id=${u}`],
+  ["GitHub", "from:github.com", /signed in as\s*<strong>([A-Za-z0-9-]+)<\/strong>/, (u) => `https://github.com/${u}`],
+];
+const CITIES = [["תל אביב", "תל-אביב", "Tel Aviv"], ["ירושלים", "Jerusalem"], ["חיפה", "Haifa"], ["ראשון לציון"], ["פתח תקווה", "פתח תקוה"], ["אשדוד"], ["נתניה"], ["באר שבע"], ["בני ברק"], ["חולון"], ["רמת גן"], ["אשקלון"], ["רחובות"], ["בת ים"], ["בית שמש"], ["כפר סבא"], ["הרצליה"], ["חדרה"], ["מודיעין"], ["נצרת"], ["לוד"], ["רמלה"], ["רעננה"], ["גבעתיים"], ["הוד השרון"], ["נהריה"], ["קרית גת", "קריית גת"], ["קרית אתא", "קריית אתא"], ["קרית מוצקין", "קריית מוצקין"], ["קרית ביאליק", "קריית ביאליק"], ["קרית ים", "קריית ים"], ["קרית אונו", "קריית אונו"], ["קרית שמונה", "קריית שמונה"], ["קרית מלאכי", "קריית מלאכי"], ["אילת"], ["עכו"], ["טבריה"], ["צפת"], ["עפולה"], ["כרמיאל"], ["דימונה"], ["אופקים"], ["נתיבות"], ["שדרות"], ["יבנה"], ["נס ציונה"], ["רמת השרון"], ["ראש העין"], ["גבעת שמואל"], ["אור יהודה"], ["יהוד"], ["אריאל"], ["מעלה אדומים"], ["ביתר עילית"], ["מודיעין עילית"], ["גדרה"], ["זכרון יעקב"], ["פרדס חנה"], ["קיסריה"], ["טירת כרמל"], ["נשר"], ["מגדל העמק"], ["יקנעם"], ["עומר"], ["מיתר"], ["להבים"], ["ערד"], ["קצרין"], ["שוהם"], ["כוכב יאיר"]];
+const DESTINATIONS = [["אתונה", "Athens"], ["לונדון", "London"], ["פריז", "Paris"], ["רומא", "Rome"], ["מילאנו", "Milan"], ["ברצלונה", "Barcelona"], ["מדריד", "Madrid"], ["ברלין", "Berlin"], ["אמסטרדם", "Amsterdam"], ["פראג", "Prague"], ["בודפשט", "Budapest"], ["וינה", "Vienna"], ["ורשה", "Warsaw"], ["בוקרשט", "Bucharest"], ["סופיה", "Sofia"], ["לרנקה", "Larnaca"], ["פאפוס", "Paphos"], ["כרתים", "Crete", "Heraklion"], ["רודוס", "Rhodes"], ["סלוניקי", "Thessaloniki"], ["דובאי", "Dubai"], ["ניו יורק", "New York"], ["לוס אנג'לס", "Los Angeles"], ["מיאמי", "Miami"], ["בנגקוק", "Bangkok"], ["טוקיו", "Tokyo"], ["ליסבון", "Lisbon"], ["דבלין", "Dublin"], ["ציריך", "Zurich"], ["ז'נבה", "Geneva"], ["מינכן", "Munich"], ["פרנקפורט", "Frankfurt"], ["בטומי", "Batumi"], ["טביליסי", "Tbilisi"], ["מרקש", "Marrakech"]];
+const wordRx = (names) => new RegExp(`(?:^|[^א-תA-Za-z])(?:[בלמה])?(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?=$|[^א-תA-Za-z])`, "gi");
+const CITY_RX = CITIES.map((c) => [c[0], wordRx(c)]);
+const DEST_RX = DESTINATIONS.map((c) => [c[0], wordRx(c)]);
+const PLACE_STRONG = /המושכר|הנכס|כתובת הנכס|מקום המגורים|property/i;
+const PLACE_WEAK = /כתובת|ברחוב|רחוב|רח'|מען|בעיר|ביישוב|address/i;
+const EMPLOYER_RX = /(?:שם המעסיק|שם מעסיק|מעסיק|employer)\s*[:：]\s*([^\n\r|,;<]{2,30})/i;
+
+// A Hebrew PDF often stores its words in visual order, so each is tried both ways
+const bothWays = (t) => [t, t.split(/\s+/).map((w) => (/[א-ת]/.test(w) ? [...w].reverse().join("") : w)).join(" ")];
+function placeScore(text) {
+  let best = null, bestScore = 0;
+  for (const variant of bothWays(text)) for (const [name, rx] of CITY_RX) {
+    let score = 0;
+    for (const m of variant.matchAll(rx)) {
+      const around = variant.slice(Math.max(0, m.index - 60), m.index + m[0].length + 20);
+      score += PLACE_STRONG.test(around) ? 3 : PLACE_WEAK.test(around) ? 1 : 0;
+    }
+    if (score > bestScore) { best = name; bestScore = score; }
+  }
+  return best ? [best, Math.min(bestScore, 3)] : null;
+}
+function decodePart(body, part) {
+  const raw = atob(body.data.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  const ct = (part.headers || []).find((h) => h.name.toLowerCase() === "content-type")?.value || "";
+  const charset = /charset="?([\w-]+)/i.exec(ct)?.[1] || "utf-8";
+  try { return new TextDecoder(charset).decode(bytes); } catch { return new TextDecoder().decode(bytes); }
+}
+function partsOf(p, out = []) {
+  if (p) { out.push(p); (p.parts || []).forEach((x) => partsOf(x, out)); }
+  return out;
+}
+let pdfReady = null;
+function loadPdf() {
+  pdfReady ??= new Promise((res, rej) => {
+    const s = Object.assign(document.createElement("script"), { src: "vendor/pdf.min.js", onload: res, onerror: rej });
+    document.head.append(s);
+  }).then(() => { pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js"; });
+  return pdfReady;
+}
+async function pdfText(data) {
+  await loadPdf();
+  const bytes = Uint8Array.from(atob(data.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const doc = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  let text = "";
+  for (let i = 1; i <= Math.min(doc.numPages, 6); i++) text += " " + (await (await doc.getPage(i)).getTextContent()).items.map((x) => x.str).join(" ");
+  await doc.destroy();
+  return text;
+}
+
+async function readRelevant(search, pool, drop, senders) {
+  const out = { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 };
+  const [rules, hashes] = await Promise.all(["rules", "excluded_hashes"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
+  const hidden = new Set(hashes.sha256);
+  const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  // The same policy as the engine: mail from an excluded kind of sender is never decoded
+  const blocked = async (domain) => {
+    const parts = domain.split(".");
+    for (let i = 0; i < parts.length - 1; i++) {
+      const d = parts.slice(i).join(".");
+      if (senders[d] && senders[d].sector in rules.excluded_sectors) return true;
+      if (hidden.has(await sha(d))) return true;
+    }
+    return false;
+  };
+  const headerOf = (g, n) => (g.payload?.headers || []).find((h) => h.name.toLowerCase() === n)?.value || "";
+  async function fetchMail(id) {
+    const g = await gget(`${API}/messages/${id}?format=full`, READ_UNITS);
+    const domain = addrOf(headerOf(g, "from")).split("@")[1] || "";
+    if (await blocked(domain)) return null;
+    out.body_reads++;
+    return g;
+  }
+  const textOf = (g) => partsOf(g.payload).filter((p) => p.body?.data && /^text\//.test(p.mimeType || "")).map((p) => {
+    const t = decodePart(p.body, p);
+    return p.mimeType === "text/html" ? new DOMParser().parseFromString(t, "text/html").body.textContent : t;
+  }).join(" ");
+  let pdfBudget = 12;
+  async function pdfsOf(g) {
+    const texts = [];
+    for (const p of partsOf(g.payload)) {
+      if (!/\.pdf$/i.test(p.filename || "") || !p.body?.attachmentId || p.body.size > 4e6 || pdfBudget <= 0) continue;
+      pdfBudget--;
+      try {
+        const a = await gget(`${API}/messages/${g.id}/attachments/${p.body.attachmentId}`, READ_UNITS);
+        texts.push(await pdfText(a.data));
+        out.pdf_read++;
+      } catch (e) { out.pdf_failed++; } // scanned or password protected: nothing to read
+    }
+    return texts;
+  }
+  const idsFor = async (q, max) => (await search(q)).filter((m) => !drop.has(m.id)).slice(0, max).map((m) => m.id);
+  const when = (id) => new Date(idTime(id)).toISOString().slice(0, 10);
+
+  const cities = {};
+  await pool(await idsFor(READ_TOPICS.residence.q, READ_TOPICS.residence.max), 4, async (id) => {
+    const g = await fetchMail(id);
+    if (!g) return;
+    const found = placeScore([textOf(g), ...(await pdfsOf(g))].join(" "));
+    if (!found) return;
+    const c = (cities[found[0]] ??= { name: found[0], votes: 0, mails: 0, first: when(id), last: when(id) });
+    c.votes += found[1]; c.mails++;
+    if (when(id) < c.first) c.first = when(id);
+    if (when(id) > c.last) c.last = when(id);
+  });
+  out.city = Object.values(cities).sort((a, b) => b.votes - a.votes)[0] || null;
+
+  const employers = {};
+  await pool(await idsFor(READ_TOPICS.work.q, READ_TOPICS.work.max), 4, async (id) => {
+    const g = await fetchMail(id);
+    if (!g) return;
+    const m = EMPLOYER_RX.exec([textOf(g), ...(await pdfsOf(g))].join(" "));
+    if (m) { const name = m[1].trim(); employers[name] = (employers[name] || 0) + 1; }
+  });
+  const [employer, employerN] = Object.entries(employers).sort((a, b) => b[1] - a[1])[0] || [];
+  if (employerN >= 2) out.employer = { name: employer, mails: employerN };
+
+  const dests = {};
+  await pool(await idsFor(READ_TOPICS.flights.q, READ_TOPICS.flights.max), 4, async (id) => {
+    const g = await fetchMail(id);
+    if (!g) return;
+    const t = textOf(g);
+    for (const [name, rx] of DEST_RX) { rx.lastIndex = 0; if (rx.test(t)) dests[name] = (dests[name] || 0) + 1; }
+  });
+  out.destinations = Object.entries(dests).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name]) => name);
+
+  // The link is rebuilt from a checked name, so a login token in the mail's own link never comes along
+  await pool(SOCIAL, 4, async ([name, q, rx, make]) => {
+    for (const id of (await search(q)).slice(0, 5).map((m) => m.id)) {
+      const g = await fetchMail(id);
+      if (!g) continue;
+      const html = partsOf(g.payload).filter((p) => p.body?.data && p.mimeType === "text/html").map((p) => decodePart(p.body, p)).join(" ");
+      const u = (name === "GitHub" && headerOf(g, "x-github-recipient")) || rx.exec(html)?.[1];
+      if (u && /^[A-Za-z0-9._%-]+$/.test(u)) { out.links[name] = make(u); break; }
+    }
+  });
+  return out;
+}
+
 async function readMailbox() {
   $("#connect-pre").hidden = true;
   $("#connect-run").hidden = false;
@@ -401,6 +556,8 @@ async function readMailbox() {
   await pool(SIGNAL_QUERIES, 8, async (q) => { (await search(q)).forEach((m) => toOpen.add(m.id)); });
   sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
   await pool([...toOpen], 4, open);
+  // The report stands without this: a failure here costs a city, not the run
+  const readOut = await readRelevant(search, pool, drop, senders).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
   stage("read", "done", fmtN(total - pending.size));
@@ -417,12 +574,13 @@ async function readMailbox() {
     return new Promise((res, rej) => {
       S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
       worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds } });
+        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut } });
     }).then((r) => ({ r, counted }));
   };
   const first = await runEngine();
   S.run = { messages: first.counted, listed: total, skipped_promotions: skipped, reads, complete: false, mailbox_since,
             report_seconds: Math.round((performance.now() - t0) / 1000) };
+  Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed });
   S.result = first.r;
   stage("engine", "done");
   bar(1);
@@ -546,12 +704,16 @@ const evText = (p) => {
   if (p.note) bits.push(p.note);
   return bits.join(" · ");
 };
+// A profile link. Rebuilt from a checked name in readRelevant, and escaped here as well
+const valHtml = (p) => (p.link && /^https:\/\//.test(p.link)
+  ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
 const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
 function renderReport() {
   const r = S.result;
   $("#rep-name").textContent = S.owner.name_he;
+  $("#rep-read").textContent = S.run.body_reads ? `בנוסף נקראו ${fmtN(S.run.body_reads)} מיילים על מגורים, עבודה, טיסות ורשתות. מהם נשמרו רק עיר, מעסיק, יעדים וקישורים.` : "";
   const d = r.today.split("-").reverse().join(".");
   const ymOf = (x) => x.slice(0, 7).split("-").reverse().join(".");
   const range = r.stats.date_range;
@@ -565,7 +727,7 @@ function renderReport() {
   $("#rep-groups").innerHTML = r.groups.map((g) => `
     <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>
-        <div class="val ${p.v === null ? "none" : ""}">${esc(valText(p))}</div>
+        <div class="val ${p.v === null ? "none" : ""}">${valHtml(p)}</div>
         <div class="ev">${evLine(p)}</div>
       </div>`).join("")}</div>`).join("");
   $("#rep-suppliers").hidden = !r.suppliers.length;
@@ -626,7 +788,7 @@ function reviewRow(id) {
   return `<div class="rv-row ${hidden ? "is-hidden" : ""}" data-id="${id}">
     <label class="rv-v" title="לשתף את השורה"><input type="checkbox" data-show ${hidden ? "" : "checked"} aria-label="לשתף: ${esc(label)}"></label>
     <div class="rv-lab">${esc(label)}</div>
-    <div class="rv-val ${isParam && p.v === null ? "none" : ""}">${hidden ? `<span class="redact" role="img" aria-label="מושחר"></span>` : esc(value)}</div>
+    <div class="rv-val ${isParam && p.v === null ? "none" : ""}">${hidden ? `<span class="redact" role="img" aria-label="מושחר"></span>` : isParam ? valHtml(p) : esc(value)}</div>
     <div class="rv-ev">${hidden ? (whole ? "השורה הזו לא תישלח בכלל." : "יישלחו רק התשובה וההערה שלך, אם תוסיפו.") : isParam ? evLine(p) : ""}</div>
     ${chips || canNote ? `<div class="rv-act">${chips}${canNote ? `<button class="link" data-note-open>תגובה</button>` : ""}</div>` : ""}
     ${kinds}
@@ -791,7 +953,8 @@ function statsRecord() {
   const out = { messages: st.messages, business_in: st.business_in, business_in_registered: st.business_in_registered,
                 business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs,
                 skipped_promotions: S.run.skipped_promotions, reads: S.run.reads, report_seconds: S.run.report_seconds,
-                read_seconds: S.run.read_seconds, complete: S.run.complete };
+                read_seconds: S.run.read_seconds, complete: S.run.complete,
+                body_reads: S.run.body_reads, pdf_read: S.run.pdf_read, pdf_failed: S.run.pdf_failed };
   if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
   return out;
 }
