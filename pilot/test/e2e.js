@@ -43,10 +43,14 @@ function fixture() {
   for (let m = 0; m < 2; m++) { add(15 + m, "office@lawyer-example.co.il", "חוזה לחתימה"); last().body = "כתובת הנכס: רחוב הרצל 5, המושכר נמצא בעיר חיפה"; }
   add(19, "office@lawyer-example.co.il", "הסכם שנתי"); last().pdf = true;
   add(21, "care@maccabi4u.co.il", "הסכם טיפול"); last().body = "המושכר בעיר אילת";
-  for (let m = 0; m < 2; m++) { add(30 * m + 11, "hr@payroll-example.co.il", "תלוש שכר"); last().body = "שם המעסיק: חברת דוגמה\nשכר ברוטו 12345"; }
+  for (let m = 0; m < 2; m++) { add(30 * m + 11, "hr@payroll-example.co.il", "תלוש שכר"); last().body = "שם המעסיק: חברת דוגמה\nהיקף משרה: 80%\nשכר ברוטו 12345"; }
   add(25, "tickets@air-example.com", "כרטיס טיסה"); last().body = "TLV to Athens, seat 12A";
   for (let m = 0; m < 5; m++) { add(3 + m, "messages-noreply@linkedin.com", "הודעה חדשה"); last().html = '<a href="https://il.linkedin.com/comm/in/test-owner?midToken=secrettoken&amp;trk=eml-header-0-profile_glimmer">me</a><a href="https://il.linkedin.com/comm/in/other-person?trk=eml-ProfileCard-0-profile_name">them</a>'; }
   for (let m = 0; m < 4; m++) add(30 * m + 8, "billing@saasco.io", "קבלה על התשלום");
+  // the paragraph: an academic sender, a standing order, and contracts the participant wrote about
+  for (let m = 0; m < 3; m++) add(50 + m, "office@campus-example.ac.il", "מערכת שעות");
+  add(70, "billing@bezeq.co.il", "אישור הוראת קבע");
+  for (let m = 0; m < 2; m++) add(80 + m, "", "הערות לחוזה", true);
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
@@ -95,10 +99,27 @@ async function run(browser, mode) {
     r.fulfill({ body: fs.readFileSync(f), contentType: type, headers: { "access-control-allow-origin": "*" } });
   });
   // the mail script: the full mode fails once first, to prove the answers survive a failed send
-  const posts = [];
+  const posts = [], searches = [], registryCalls = [];
+  await ctx.route("https://data.gov.il/**", (r) => {
+    registryCalls.push(r.request().url());
+    const own = r.request().url().includes("f004176c"); // the company registry
+    const [first, ...rest] = OWNER_HE.split(" ");
+    const records = own ? [{ "שם חברה": `${first} ${rest.join(" ")} בע"מ`, "מספר חברה": "515", "סטטוס חברה": "פעילה", "שם עיר": "חיפה" }] : [];
+    r.fulfill({ body: JSON.stringify({ result: { records } }), contentType: "application/json", headers: { "access-control-allow-origin": "*" } });
+  });
   let failNext = mode === "full";
   await ctx.route("https://script.google.com/**", (r) => {
     const headers = { "access-control-allow-origin": "*" };
+    if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
+      searches.push(r.request().postData());
+      return r.fulfill({ body: JSON.stringify({ ok: true, results: [
+        { title: `${OWNER_HE} מרצה בכנס`, link: "https://news-example.co.il/a#top", snippet: "" },
+        { title: `${OWNER_HE} פסק דין`, link: "https://www.psakdin.co.il/Document/1", snippet: "" },
+        { title: `${OWNER_HE} | GitHub`, link: "https://github.com/test-owner-gh", snippet: "" },
+        { title: `${OWNER_HE} אלופת ישראל בקרוספיט`, link: "https://sport-example.co.il/c", snippet: "" },
+        { title: "מישהו אחר לגמרי", link: "https://other-example.co.il/b", snippet: "" },
+      ] }), contentType: "application/json", headers });
+    }
     if (failNext) { failNext = false; return r.fulfill({ status: 500, body: "{}", headers }); }
     posts.push(r.request().postData());
     r.fulfill({ body: '{"ok":true}', contentType: "application/json", headers });
@@ -154,6 +175,7 @@ async function run(browser, mode) {
   await page.check("#has-hh");
   await page.fill("#hh-name", HH_NAME);
   await page.click("#details-next");
+  if (mode === "private") await page.uncheck("#web-ok"); // this run also proves nothing goes out without the box
   await page.click("#connect");
   await page.waitForSelector("#s-report.on", { timeout: 180000 });
   assert(await page.isVisible("#bg-status"), "no word about the work still running");
@@ -198,6 +220,24 @@ async function run(browser, mode) {
     assert.strictEqual(report.platform_linkedin.link, "https://www.linkedin.com/in/test-owner", "own profile link");
     assert.strictEqual(await page.locator('#rep-groups a[href="https://www.linkedin.com/in/test-owner"]').count(), 1, "the link is not on the page");
     assert.strictEqual(await page.evaluate(() => S.run.pdf_read), 1, "the PDF was not read");
+    // the web and registries: only the participant's own name goes out, and a court page never comes back
+    if (mode === "full") {
+      assert.strictEqual(searches.length, 1, "web search calls");
+      assert(!searches[0].includes(HH_NAME) && !registryCalls.some((u) => decodeURIComponent(u).includes(HH_NAME)), "a household member was searched");
+      assert.ok(report.web_mentions.links.some((l) => l.url === "https://news-example.co.il/a"), "web mention");
+      assert(!/psakdin|other-example/.test(JSON.stringify(report.web_mentions)), "court or unrelated result in the report");
+      assert.ok(String(report.companies_registry.v).includes("515"), "company registry");
+      assert.strictEqual(report.platform_github.link, "https://github.com/test-owner-gh", "a profile found by web search");
+      assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
+      // the paragraph is added above the report; it says what the rows say and nothing about who the person is
+      const para = await page.evaluate(() => portraitText());
+      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "הוראת קבע", "חוזים והסכמים", "אלופת ישראל בקרוספיט"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
+      assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
+      assert.strictEqual(await page.locator("#rep-groups .group").count() > 3, true, "the report rows must stay under the paragraph");
+    } else {
+      assert.strictEqual(searches.length + registryCalls.length, 0, "the name went out with the box unticked");
+      assert.strictEqual(report.web_mentions, undefined, "web rows with the box unticked");
+    }
     for (const leak of ["הרצל", "secrettoken", "other-person", "12345", "אילת", "seat"]) assert(!all.includes(leak), "from the mail's text: " + leak);
     assert.ok(report.reply_time.v.includes("30"), "reply time: " + report.reply_time.v);
     assert.strictEqual(report.reply_time.private, false, "a bonus row must not be asked in the private mode");
@@ -261,6 +301,9 @@ async function run(browser, mode) {
     assert((await page.textContent("#rev-groups")).includes(secret), "row value should be on the screen");
     await page.uncheck(`${row("longest_supplier")} [data-show]`);
     assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
+    // a row blacked out takes its sentence out of the paragraph
+    await page.uncheck(`${row("job_scope")} [data-show]`);
+    assert(!(await page.textContent("#rev-portrait")).includes("80%"), "a blacked-out row is still in the paragraph");
     // rows that say something by name alone leave no trace when blacked out
     for (const k of ["interest_travel", "platform_facebook", "household_accounts"]) await page.uncheck(`${row(k)} [data-show]`);
     await page.click(`${row("legal")} [data-rv="wrong"]`);
@@ -335,6 +378,7 @@ async function run(browser, mode) {
     const params = result.groups.flatMap((g) => g.params);
     const hiddenValue = String(params.find((p) => p.key === "longest_supplier").v);
     assert(!text.includes(hiddenValue), "blacked-out value in the file: " + hiddenValue);
+    assert(fb.report.portrait.includes("חברת דוגמה") && !fb.report.portrait.includes("80%"), "the paragraph sent: " + fb.report.portrait);
     const repRows = fb.report.groups.flatMap((g) => g.rows);
     const hiddenRow = repRows.find((r) => r.key === "longest_supplier");
     assert(hiddenRow.hidden && !("value" in hiddenRow) && !("evidence" in hiddenRow), "a blacked-out row carries more than its name");

@@ -4,6 +4,28 @@
 // Execute as: Me, Who has access: Anyone. Put the /exec URL in site/config.js, in sendUrl.
 
 const MAX_BYTES = 300000;
+// Web search for the report. The key is written in only when deploying and is never committed; this URL is public, so the
+// daily cap is what limits someone else spending the credits
+const SERPER_KEY = "PASTE_AT_DEPLOY";
+const SEARCHES_PER_DAY = 100;
+
+function webSearch(queries) {
+  if (SERPER_KEY.startsWith("PASTE")) return { ok: false, error: "nokey" };
+  if (!Array.isArray(queries) || queries.length > 2 || queries.some((q) => typeof q !== "string" || q.length > 70)) return { ok: false, error: "shape" };
+  const props = PropertiesService.getScriptProperties();
+  const counter = "searches-" + Utilities.formatDate(new Date(), "UTC", "yyyyMMdd");
+  const used = Number(props.getProperty(counter) || 0);
+  if (used + queries.length > SEARCHES_PER_DAY) return { ok: false, error: "cap" };
+  props.setProperty(counter, String(used + queries.length));
+  const results = [];
+  queries.forEach((q) => {
+    const r = UrlFetchApp.fetch("https://google.serper.dev/search", { method: "post", contentType: "application/json", muteHttpExceptions: true,
+      headers: { "X-API-KEY": SERPER_KEY }, payload: JSON.stringify({ q: q, gl: "il", hl: "iw", num: 10 }) });
+    if (r.getResponseCode() !== 200) return;
+    (JSON.parse(r.getContentText()).organic || []).forEach((h) => results.push({ title: h.title, link: h.link, snippet: h.snippet }));
+  });
+  return { ok: true, results: results };
+}
 
 function reply(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
@@ -36,6 +58,7 @@ function renderMail(d) {
   if (a["q-overall"]) out += `<p><b>כמה נכון בסך הכול:</b> ${esc(a["q-overall"])}</p>`;
   if (a["q-ux"]) out += `<p><b>מה היה מבלבל:</b> ${esc(a["q-ux"])}</p>`;
   const rep = d.report;
+  if (rep && rep.portrait) out += title("בכמה מילים") + `<p style="font-size:15px;line-height:1.7">${esc(rep.portrait)}</p>`;
   if (rep && Array.isArray(rep.groups)) {
     rep.groups.forEach((g) => {
       out += title(g.title) + table(head(["שורה", "מה המנוע כתב", "על סמך", "תשובה"]) + (g.rows || []).map((r) =>
@@ -69,6 +92,7 @@ function doPost(e) {
   if (!raw || raw.length > MAX_BYTES) return reply({ ok: false, error: "size" });
   let d;
   try { d = JSON.parse(raw); } catch (err) { return reply({ ok: false, error: "json" }); }
+  if (d.kind === "imtrustme-search") return reply(webSearch(d.queries));
   if (d.kind !== "imtrustme-pilot-feedback" || d.version !== 2 || !Array.isArray(d.verdicts)) return reply({ ok: false, error: "shape" });
 
   const from = String(d.from || "ללא שם").replace(/[\r\n]+/g, " ").slice(0, 60);

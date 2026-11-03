@@ -97,6 +97,9 @@
         <p style="margin:8px 0">הבדיקה מחפשת ב-Gmail במקום לעבור על כל מייל, וכך היא נמשכת דקות ולא שעה. חיפוש דורש הרשאת קריאה, ולכן זה הנוסח שמופיע במסך האישור, וההרשאה עצמה אכן רחבה.</p>
         <p style="margin:8px 0 0"><b>בפועל</b> הבדיקה משתמשת בעיקר בשולח, בנמען, בנושא ובתאריך. תוכן נקרא רק במיילים על מגורים, עבודה, טיסות ורשתות, ונשמרים ממנו רק עיר, מעסיק, יעדים וקישורים. הכול רץ בדפדפן שלך, והגישה מתבטלת בסיום.</p>
       </div>
+      <label class="card web-ok"><input type="checkbox" id="web-ok" checked>
+        <div><b>לחפש את השם שלי גם בגוגל ובמאגרים ציבוריים</b>
+        <div class="small">כאן השם, ורק השם, יוצא מהדפדפן: לשירות חיפוש ולמאגרי הממשלה. אפשר להוריד את הסימון.</div></div></label>
       <div class="actions">
         <button class="btn google" id="connect"><svg class="ico" style="margin:0"><use href="#i-env"/></svg>חיבור Gmail</button>
         <button class="btn ghost" data-go="s-details">חזרה</button>
@@ -133,6 +136,11 @@
       <div class="rep-box" id="rep-meta"></div>
     </div>
     <div class="rep-note">אין כאן ציון ואין המלצה. כל שורה היא עובדה, עם מספר המיילים שעליהם היא מבוססת ועם התקופה שלהם.</div>
+    <div class="card portrait" id="rep-portrait" hidden>
+      <h2>בכמה מילים</h2>
+      <p class="portrait-text"></p>
+      <p class="small">כל משפט נבנה משורה בדוח שלמטה. בלי ציון, בלי המלצה ובלי דעה.</p>
+    </div>
     <div class="card hero" id="rep-hero" hidden>
       <h2>מה גילינו על התיבה שלך</h2>
       <div class="tiles" id="hero-tiles"></div>
@@ -192,6 +200,11 @@
     <div class="rev-tools">
       <span class="small" id="rev-count"></span>
       <span><button class="link" id="rev-none">להשחיר הכול</button> <button class="link" id="rev-all">לסמן הכול</button></span>
+    </div>
+    <div class="card portrait" id="rev-portrait" hidden>
+      <h2>בכמה מילים</h2>
+      <p class="portrait-text"></p>
+      <p class="small">כך זה יישלח. כשמורידים V משורה, המשפט שלה יורד מכאן.</p>
     </div>
     <div id="rev-groups"></div>
     <div class="other-way">
