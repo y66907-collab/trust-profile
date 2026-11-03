@@ -9,6 +9,12 @@ function reply(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// Opening the URL once, as the owner, is what grants the permission to send
+function doGet() {
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL); // Google lets people tick permissions one by one
+  return reply({ ok: true, ready: true });
+}
+
 function doPost(e) {
   // The URL is public, so anything that isn't a feedback in the expected shape is refused
   const raw = e && e.postData ? e.postData.contents : "";
