@@ -513,6 +513,8 @@ def run(payload_json: str) -> str:
               "כספים": ("חיסכון פנסיוני פעיל", "מיילים על הוראות קבע", alerts, "הקשר הארוך ביותר עם ספק", problems),
               "פנאי": ("יעדי טיסה",)}
     for x in portrait:
+        x["main"] = x["label"] in ("עיר מגורים לפי חשבונות", "עדכון כתובת ברשות האוכלוסין", "משכנתא", "מעסיק לפי מיילים", "היקף משרה",
+                                   "מוסד אקדמי בתיבה", problems) or x.get("join") == "תחומי עניין"
         x["topic"] = next((t for t, labels in topics.items() if x["label"] in labels),
                           "פנאי" if x.get("join") == "תחומי עניין" else "ברשת")
     # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name

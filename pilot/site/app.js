@@ -673,9 +673,23 @@ async function readMailbox() {
   S.result = first.r;
   stage("engine", "done");
   bar(1);
+  S.aiPending = $("#ai-ok").checked || $("#web-ok").checked;
   renderReport();
   go("s-report");
   showBackground(total - pending.size, total);
+  S.enrich = (async () => {
+    await lookupEmployer(first.r).catch((e) => console.warn("employer lookup stopped", e));
+    await askAi(first.r).catch((e) => console.warn("AI paragraph stopped", e));
+    S.aiPending = false;
+    attachEmployer(S.result);
+    attachAi(S.result);
+    renderReport();
+    if (S.mode) {
+      S.checkList = [];
+      S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { if (!isPrivate() || p.private) S.checkList.push(`${gi}.${pi}`); }));
+      if (!isPrivate()) renderReview();
+    }
+  })();
 
   // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
   // is left unaccounted for. The final run replaces the report, so nothing is sent from a result that was only partial
@@ -698,8 +712,7 @@ async function readMailbox() {
       });
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
-      await lookupEmployer(last.r).catch((e) => console.warn("employer lookup stopped", e));
-      await askAi(last.r).catch((e) => console.warn("AI paragraph stopped", e));
+      await S.enrich;
       applyFinal(last.r);
     } catch (e) {
       console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
@@ -823,14 +836,7 @@ async function lookupEmployer(r) {
   const wanted = nameWords(dropCompanyWords(name));
   const matches = records.filter((x) => wanted.length && wanted.every((w) => nameWords(x["שם חברה"]).includes(w)));
   const record = new Set(matches.map((x) => x["מספר חברה"])).size === 1 ? matches[0] : null;
-  const better = bestProfile(S.linkedinHits || [], name);
-  const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");
-  if (better && profileRow?.note?.includes("מישהו אחר")) {
-    profileRow.link = better;
-    profileRow.v = better.split("//")[1].replace(/^www\./, "");
-    const item = (r.portrait || []).find((x) => x.label === "LinkedIn");
-    if (item) item.url = better;
-  }
+  S.bestLinkedin = bestProfile(S.linkedinHits || [], name);
   const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
   const clean = (u) => String(u || "").split(/[?#]/)[0];
   const linkedin = hits.map((h) => clean(h.link)).find((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/.test(u));
@@ -842,6 +848,13 @@ async function lookupEmployer(r) {
   S.employer = { name, lead, links, snippet: String(site?.snippet || "").slice(0, 180) };
 }
 function attachEmployer(r) {
+  const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");
+  if (S.bestLinkedin && profileRow?.note?.includes("מישהו אחר")) {
+    profileRow.link = S.bestLinkedin;
+    profileRow.v = S.bestLinkedin.split("//")[1].replace(/^www\./, "");
+    const item = (r.portrait || []).find((x) => x.label === "LinkedIn");
+    if (item) item.url = S.bestLinkedin;
+  }
   if (!S.employer || r.groups.some((g) => g.title === "מקום העבודה")) return;
   const { name, lead, links } = S.employer;
   r.groups.push({ title: "מקום העבודה", params: [{ label: `על ${name}`, v: [lead, ...links.map((l) => l.url)].filter(Boolean).join(" · "), lead, links, n: null, span: "", why: null,
@@ -917,12 +930,12 @@ function summaryLines() {
 }
 
 // The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
-function portraitLines() {
+function portraitLines(mainOnly) {
   const ids = {};
   S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
   const topics = new Map();
   for (const x of S.result.portrait || []) {
-    if (isHidden(ids[x.label])) continue;
+    if (isHidden(ids[x.label]) || (mainOnly && !x.main)) continue;
     if (!topics.has(x.topic)) topics.set(x.topic, { plain: [], lists: new Map() });
     const t = topics.get(x.topic);
     if (!x.join) t.plain.push(x.text);
@@ -936,10 +949,11 @@ function showPortrait(card) {
   const line = (l) => `<div class="p-line"><span>${esc(l.topic)}</span><div>${esc(l.text)}</div></div>`;
   // The conclusions go on top. Without them, the facts by topic take that place
   $(`${card}`).hidden = !lines.length && !summary.length && !ai;
-  $(`${card} .portrait-top`).innerHTML = (summary.length ? summary : lines).map(line).join("");
+  const wait = S.aiPending ? `<p class="portrait-wait">עוד רגע: כותבים מסקנות ומחפשים קישורים…</p>` : "";
+  $(`${card} .portrait-top`).innerHTML = wait + (summary.length ? summary : portraitLines(true)).map(line).join("");
   $(`${card} .portrait-links`).innerHTML = links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("");
-  $(`${card} .portrait-more`).hidden = !summary.length && !ai;
-  $(`${card} .portrait-text`).innerHTML = summary.length ? lines.map(line).join("") : "";
+  $(`${card} .portrait-more`).hidden = !lines.length && !ai;
+  $(`${card} .portrait-text`).innerHTML = lines.map(line).join("");
   $(`${card} .portrait-ai`).hidden = !ai;
   $(`${card} .portrait-ai-text`).textContent = ai;
 }
