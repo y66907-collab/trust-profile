@@ -43,13 +43,17 @@ ROW_KEYS = {
     "התראות בנק: חשבון מוגבל, שיק חזר, חריגה": "bank_alerts", "הלוואות": "loans", "בנק לפי מיילים": "bank",
     "מעסיק לפי מיילים": "employer", "תלושי שכר שהגיעו במייל": "payslips", "חיסכון פנסיוני פעיל": "pension",
     "משכנתא": "mortgage", "חשבון ה-Gmail שחובר": "gmail_account", "גיל תיבת המייל": "mailbox_age",
-    "חשבונות על שמך": "own_accounts",
+    "חשבונות על שמך": "own_accounts", "למי גופים פונים בתיבה": "addressed_to", "ותק לפי מיילים מהמעסיק": "employer_since",
+    "דוח נתוני אשראי": "credit_report",
 }
 # Allow-list: rows where saying what kind of mistake it was reveals nothing personal. Any other row, including
 # one added later, sends a bare answer when the report isn't shared ("missing" on a legal row would say there is a case)
 DETAIL_OK = {"city", "residence_since", "utility_accounts", "address_update", "regular_suppliers", "long_suppliers",
              "longest_supplier", "bank", "gmail_account", "mailbox_age", "own_accounts"}
 NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
+
+
+INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
 
 
 def row_meta(label: str, r: dict) -> dict:
@@ -59,6 +63,8 @@ def row_meta(label: str, r: dict) -> dict:
     if label.startswith("חשבונות על שם "):
         return {"key": "household_accounts", "fb_label": "חשבונות על שם בן/בת הבית", "detail": False,
                 "private": False, "outcome": outcome}
+    if label in INTEREST_KEYS:  # having one is itself personal, so it is only asked when the report is shared
+        return {"key": "interest_" + INTEREST_KEYS[label], "fb_label": label, "detail": False, "private": False, "outcome": outcome}
     if label in {name for name, _ in PLATFORMS}:
         return {"key": "platform_" + label.lower(), "fb_label": label, "detail": False, "private": False, "outcome": outcome}
     key = ROW_KEYS[label]
@@ -226,6 +232,29 @@ def run(payload_json: str) -> str:
             plat_rows.append((name, P("חשבון קיים על הכתובת המחוברת", ms)))
     own_bills = [m for m in billing if m.holder == "owner"]
     hh_rels = [e for e in rel if e.holder == "household"]
+    addressed_msgs = [m for m in msgs if m.sender_class == "registered" and m.direction == "in" and m.holder]
+    by_holder = Counter(m.holder for m in addressed_msgs)
+    addressed = [f"בשמך: {by_holder['owner']}"] if by_holder["owner"] else []
+    if by_holder["household"] and hh:
+        addressed.append(f"בשם {hh['name']}: {by_holder['household']}")
+    holder_he = {"owner": "על שמך", "household": f"על שם {hh['name']}" if hh else "", None: "לא צוין שם"}
+
+    # ---- interests: at least 3 mails, so a one-off order isn't called an interest
+    INTEREST_KEYS.clear()
+    by_topic: dict[str, list[dict]] = {}
+    for it in p.get("interests", []):
+        by_topic.setdefault(it["label"], []).append(it)
+    interest_rows = []
+    for label, items in by_topic.items():
+        n = sum(i["n"] for i in items)
+        if n < 3:
+            continue
+        INTEREST_KEYS[label] = items[0]["key"]
+        top = sorted(items, key=lambda i: -i["n"])
+        when = [datetime.fromtimestamp(t / 1000, UTC).date().isoformat() for i in items for t in (i["first"], i["last"])]
+        a, b = ym(min(when)), ym(max(when))
+        interest_rows.append((label, {"v": ", ".join(i["domain"] for i in top[:4]), "n": n, "span": a if a == b else f"{a}–{b}",
+                                      "why": None, "note": None}))
 
     groups = [
         ("מגורים", [
@@ -247,6 +276,7 @@ def run(payload_json: str) -> str:
             ("התראות גבייה", P(sum(1 for m in msgs if m.event_type == "collection_notice"), billing, n=len(billing))),
             ("הליך משפטי, הוצאה לפועל או עיקול", sig(rules["signals"]["legal"]["subject"])),
             ("התראות בנק: חשבון מוגבל, שיק חזר, חריגה", sig(rules["signals"]["bank_alerts"]["subject"])),
+            ("דוח נתוני אשראי", sig(rules["signals"]["credit_report"]["subject"])),
             ("הלוואות", sig(rules["signals"]["loan"]["subject"])),
             ("בנק לפי מיילים", P(", ".join(bank_names) if banks else "לא זוהה", banks)),
         ]),
@@ -254,6 +284,8 @@ def run(payload_json: str) -> str:
             ("מעסיק לפי מיילים", P(employer[0].org_he, employer) if employer else
              (P(", ".join(k for k, _ in slip_from.most_common(2)), slips, note="לפי שולח התלושים") if slips
               else NA("המעסיק לא מוכר עדיין למנוע"))),
+            ("ותק לפי מיילים מהמעסיק", P(f"מ-{ym(min(m.sent_at for m in employer))}", employer) if employer
+             else NA("המעסיק לא מוכר עדיין למנוע")),
             ("תלושי שכר שהגיעו במייל", P(len(slips), slips)),
             ("חיסכון פנסיוני פעיל",
              P(f"כן ({', '.join(sorted({m.org_he or m.domain for m in pension}))})" if pension else 0, pension)),
@@ -267,11 +299,12 @@ def run(payload_json: str) -> str:
                                      "why": None, "note": None}),
             ("גיל תיבת המייל", {"v": f"פעילה מ-{ym(p['mailbox_since'])}", "n": None, "span": "", "why": None,
                                "note": None} if p.get("mailbox_since") else NA("לא נמצא")),
+            ("למי גופים פונים בתיבה", P(" · ".join(addressed) or "לא נמצא", addressed_msgs)),
             ("חשבונות על שמך", P(len(own_bills), own_bills)),
         ] + ([("חשבונות על שם " + hh["name"],
                P(", ".join(e.org_he for e in hh_rels) or 0, ep_msgs(hh_rels), note="חשבון משותף לפי הצהרתך"))]
              if hh else []) + plat_rows),
-    ]
+    ] + ([("תחומי עניין", interest_rows)] if interest_rows else [])
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]
@@ -309,6 +342,9 @@ def run(payload_json: str) -> str:
     return json.dumps({
         "rule_version": rules["version"], "today": today, "stats": stats,
         "groups": [{"title": t, "params": [{"label": l, **r, **row_meta(l, r)} for l, r in rows]} for t, rows in groups],
+        "suppliers": [{"org_he": e.org_he, "first": ym(e.first), "last": ym(e.last), "months": e.months_active,
+                       "active": e.status == "active", "holder": holder_he[e.holder]}
+                      for e in sorted(rel, key=lambda e: -e.months_active)],
         "minor": [{"org_he": e.org_he, "first": e.first, "last": e.last, "n_in": e.n_in, "level": e.max_level}
                   for e in minor],
         "unknown": [{"domain": t["domain"], "skeleton": scrub(t["skeleton"]), "count": t["count"],

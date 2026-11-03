@@ -26,6 +26,7 @@ function fixture() {
   for (let m = 0; m < 3; m++) add(10 * m + 3, "news@shop-example.co.il", "עדכון על ההזמנה שלך");
   for (let m = 0; m < 6; m++) add(9 * m + 2, "notify@facebookmail.com", "יש לך התראה חדשה");
   add(40, "office@court-example.co.il", "הודעה על הליך הוצאה לפועל");
+  for (let m = 0; m < 4; m++) { add(20 * m + 6, "deals@booking.com", "ההזמנה שלך"); if (m > 1) out[out.length - 1].promo = true; }
   for (let m = 0; m < 5; m++) { add(4 * m + 1, "sale@promo-example.co.il", "מבצע"); out[out.length - 1].promo = true; }
   add(2, "", "שלום", true);
   return out;
@@ -125,6 +126,9 @@ async function run(browser, mode) {
   await page.click("#details-next");
   await page.click("#connect");
   await page.waitForSelector("#s-report.on", { timeout: 180000 });
+  assert(await page.isVisible("#bg-status"), "no word about the work still running");
+  await page.evaluate(() => S.background);
+  assert.strictEqual(await page.evaluate(() => S.run.complete), true, "the background read did not finish");
   assert.strictEqual(await page.evaluate(() => window.__revoked), "tok", "access was not revoked");
   assert.strictEqual(promoRead, 0, "a promotion was read");
   const run = await page.evaluate(() => S.run);
@@ -135,6 +139,13 @@ async function run(browser, mode) {
   const report = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g) => g.params).map((p) => [p.key, p])));
   if (!fs.existsSync(rowsFile)) {
     assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
+    assert.strictEqual(typeof report.credit_report.v !== "undefined", true, "no credit report row");
+    assert.ok(report.addressed_to, "no addressed-to row");
+    assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
+    assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
+    const suppliers = await page.evaluate(() => S.result.suppliers);
+    assert(suppliers.some((x) => /בזק/.test(x.org_he) && x.months > 0), "the supplier table is missing the bills: " + JSON.stringify(suppliers));
+    assert((await page.textContent("#supplier-rows")).includes("בזק"), "the supplier table was not drawn");
     assert(/בזק/.test(String(report.utility_accounts.v)), "the bills found by search were missed: " + report.utility_accounts.v);
     const shop = (await page.evaluate(() => S.result.unknown)).find((u) => u.domain === "shop-example.co.il");
     assert.strictEqual(shop?.count, 3, "an unknown sender's mail was not all counted");
@@ -195,7 +206,7 @@ async function run(browser, mode) {
     // exact field allow-list, then a search of the whole file for anything taken from the report
     for (const v of fb.verdicts) {
       assert(!("value" in v) && !("note" in v), "value or note in a private verdict: " + v.key);
-      assert(!["household_accounts"].includes(v.key) && !v.key.startsWith("platform_"), "conditional row sent: " + v.key);
+      assert(!["household_accounts"].includes(v.key) && !/^(platform|interest)_/.test(v.key), "conditional row sent: " + v.key);
     }
     assert.deepStrictEqual(Object.keys(legal).sort(), ["key", "label", "verdict"], "a sensitive row carries more than the answer");
     assert.strictEqual(fb.unknown_senders.length, 0, "unknown senders must start unticked");

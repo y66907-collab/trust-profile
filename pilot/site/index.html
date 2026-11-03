@@ -28,6 +28,7 @@
   </div>
 </header>
 
+<div class="bg-status" id="bg-status" role="status" hidden></div>
 <main>
   <!-- 1. welcome -->
   <section class="screen on" id="s-welcome" data-step="1">
@@ -44,7 +45,7 @@
     <div class="card">
       <h2>חשוב לדעת</h2>
       <ul class="facts">
-        <li><svg class="ico"><use href="#i-env"/></svg><div><b>בודקים רק את המעטפה:</b> מי שלח, למי, הנושא והתאריך. הבדיקה לא פותחת את תוכן המיילים.</div></li>
+        <li><svg class="ico"><use href="#i-env"/></svg><div><b>בודקים רק את המעטפה:</b> מי שלח, למי, הנושא והתאריך. הבדיקה לא פותחת את תוכן המיילים, ואין בה דת, בריאות או דעות.</div></li>
         <li><svg class="ico"><use href="#i-lock"/></svg><div><b>הבדיקה רצה אצלך:</b> בדפדפן שלך, בלי שרת. בסוף נשלח רק מה שתאשר/י.</div></li>
         <li><svg class="ico"><use href="#i-unlink"/></svg><div><b>הגישה מתבטלת לבד</b> מיד כשהקריאה נגמרת.</div></li>
         <li><svg class="ico"><use href="#i-eye"/></svg><div><b>לא חייבים לשתף את התוצאה.</b> אפשר לשמור אותה לעצמך ולענות רק אם המנוע צדק. לפני השליחה רואים בדיוק מה נשלח.</div></li>
@@ -110,8 +111,7 @@
         <ul class="stages" id="stages">
           <li data-k="list"><span class="dot"></span><span>סופרים מיילים</span><span class="small" data-n></span></li>
           <li data-k="read"><span class="dot"></span><span>בודקים מעטפות של <span id="yrs"></span> שנים</span><span class="small" data-n></span></li>
-          <li data-k="revoke"><span class="dot"></span><span>מבטלים את הגישה ל-Gmail</span><span class="small" data-n></span></li>
-          <li data-k="engine"><span class="dot"></span><span>מסכמים</span><span class="small" data-n></span></li>
+          <li data-k="engine"><span class="dot"></span><span>בונים את הדוח</span><span class="small" data-n></span></li>
         </ul>
         <div class="bar" aria-hidden="true"><i id="bar"></i></div>
         <p class="small" id="eta" style="margin:10px 0 0"></p>
@@ -127,10 +127,21 @@
       <b>רק את/ה רואה את זה.</b> שום דבר מכאן לא יוצא בלי אישורך. אפשר לעבור על זה בנחת, ובמסך הבא בוחרים מה לשתף.
     </div>
     <div class="rep-head">
-      <div><div class="who" id="rep-name"></div></div>
-      <div class="meta" id="rep-meta"></div>
+      <div>
+        <div class="who" id="rep-name"></div>
+        <p class="small rep-sub">נבנה מתיבת ה-Gmail שחיברת, רק מהשולחים, הנושאים והתאריכים.</p>
+      </div>
+      <div class="rep-box" id="rep-meta"></div>
     </div>
+    <div class="rep-note">אין כאן ציון ואין המלצה. כל שורה היא עובדה, עם מספר המיילים שעליהם היא מבוססת ועם התקופה שלהם.</div>
     <div id="rep-groups"></div>
+    <div class="card" id="rep-suppliers" hidden>
+      <h2>פירוט ספקים</h2>
+      <div class="table-wrap"><table class="suppliers">
+        <thead><tr><th>ספק</th><th>תקופה</th><th>חודשים עם חשבון</th><th>מצב</th><th>בעל החשבון</th></tr></thead>
+        <tbody id="supplier-rows"></tbody>
+      </table></div>
+    </div>
     <div class="card" id="rep-minor" hidden>
       <h2>אירועי תשלום זניחים</h2>
       <p class="small" style="margin-top:0">חיוב שנכשל ונסגר תוך שבועיים.</p>
