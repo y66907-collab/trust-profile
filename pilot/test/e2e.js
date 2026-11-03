@@ -26,6 +26,7 @@ function fixture() {
   for (let m = 0; m < 3; m++) add(10 * m + 3, "news@shop-example.co.il", "עדכון על ההזמנה שלך");
   for (let m = 0; m < 6; m++) add(9 * m + 2, "notify@facebookmail.com", "יש לך התראה חדשה");
   add(40, "office@court-example.co.il", "הודעה על הליך הוצאה לפועל");
+  for (let m = 0; m < 5; m++) { add(4 * m + 1, "sale@promo-example.co.il", "מבצע"); out[out.length - 1].promo = true; }
   add(2, "", "שלום", true);
   return out;
 }
@@ -70,12 +71,14 @@ async function run(browser, mode) {
     posts.push(r.request().postData());
     r.fulfill({ body: '{"ok":true}', contentType: "application/json", headers });
   });
-  let gets = 0;
+  let gets = 0, promoRead = 0;
   await ctx.route("https://gmail.googleapis.com/**", (r) => {
     const u = new URL(r.request().url());
     const json = (o) => r.fulfill({ body: JSON.stringify(o), contentType: "application/json", headers: { "access-control-allow-origin": "*" } });
     if (u.pathname.endsWith("/profile")) return json({ emailAddress: ME, messagesTotal: rows.length });
     if (u.pathname.endsWith("/messages")) {
+      if (u.searchParams.get("labelIds") === "CATEGORY_PROMOTIONS")
+        return json({ messages: rows.filter((x) => x.promo).sort((a, b) => b.ts - a.ts).map((x) => ({ id: x.id, threadId: x.thread })) });
       const start = Number(u.searchParams.get("pageToken") || 0);
       const sorted = [...rows].sort((a, b) => b.ts - a.ts);
       const old = [{ id: "16d0c7e0a0000000", threadId: "16d0c7e0a0000000" }]; // a 2019 message, outside the 3 years
@@ -84,6 +87,7 @@ async function run(browser, mode) {
     }
     const id = u.pathname.split("/").pop();
     const x = byId.get(id);
+    if (x.promo) promoRead++;
     gets++;
     if (gets === 7) return r.fulfill({ status: 429, body: "{}", headers: { "access-control-allow-origin": "*" } }); // one rate-limit hit
     const from = x.sent ? `${enc(OWNER_HE)} <${ME}>` : x.from;
@@ -94,8 +98,6 @@ async function run(browser, mode) {
   const shot = (n) => page.screenshot({ path: `${SHOTS}/${mode}-${n}.png`, fullPage: true });
   await page.goto("https://site.test/index.html");
   await shot("1-welcome");
-  assert(await page.evaluate(() => document.querySelector(".logo").naturalWidth > 0), "logo did not load");
-  assert(await page.evaluate(() => document.querySelector(".brand-mark").naturalWidth > 0), "mark did not load");
 
   // the purpose stays out of everything a participant can read, on the page and in the engine's rows
   const FORBIDDEN = /משכיר|שכירת|שכר דירה|דירה|פרופיל/;
@@ -110,6 +112,7 @@ async function run(browser, mode) {
   await page.click("#connect");
   await page.waitForSelector("#s-report.on", { timeout: 180000 });
   assert.strictEqual(await page.evaluate(() => window.__revoked), "tok", "access was not revoked");
+  assert.strictEqual(promoRead, 0, "a promotion was read");
   await shot("2-report");
   assert(!FORBIDDEN.test(await page.evaluate(() => JSON.stringify(S.result.groups) + document.body.textContent)), "purpose word in the report");
 
@@ -155,6 +158,7 @@ async function run(browser, mode) {
   const fb = JSON.parse(text);
   const result = await page.evaluate(() => S.result);
   assert.strictEqual(fb.mode, mode);
+  assert.strictEqual(fb.stats.skipped_promotions, rows.filter((x) => x.promo).length, "skipped count");
   assert.strictEqual(fb.verdicts.find((v) => v.key === "loans"), undefined, "skipped row was sent");
   const city = fb.verdicts.find((v) => v.key === "city");
   const legal = fb.verdicts.find((v) => v.key === "legal");

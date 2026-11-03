@@ -82,13 +82,13 @@ for d in fbs:
 ws = wb.create_sheet("participants")
 ws.sheet_view.rightToLeft = True
 ws.append(["ממי", "דרך השיתוף", "תאריך", "מיילים", "מגופים", "גופים מזוהים %", "עם סוג אירוע %", "תבניות",
-           "שורות שנענו", "שולחים לא מוכרים", "כמה נכון בסך הכול", "מה היה מבלבל"])
+           "פרסומות שלא נקראו", "שורות שנענו", "שולחים לא מוכרים", "כמה נכון בסך הכול", "מה היה מבלבל"])
 for d in fbs:
     st = d.get("stats") or {}
     ws.append([d["from"], MODE[d["mode"]], d["created"][:10], st.get("messages"), st.get("business_in"),
                pct(st.get("business_in_registered", 0), st.get("business_in")),
                pct(st.get("business_in_labelled", 0), st.get("business_in")), st.get("templates"),
-               len(d["verdicts"]), len(d.get("unknown_senders", [])),
+               st.get("skipped_promotions"), len(d["verdicts"]), len(d.get("unknown_senders", [])),
                d.get("answers", {}).get("q-overall", ""), d.get("answers", {}).get("q-ux", "")])
 for c in ("F", "G"):
     for cell in ws[c][1:]:

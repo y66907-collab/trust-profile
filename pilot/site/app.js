@@ -136,13 +136,28 @@ async function readMailbox() {
 
   // 1. list every id (cheap). The oldest id gives the mailbox age; only the last N years are read
   stage("list", "now");
-  let ids = [], token = "", oldest = Infinity;
+  // Promotions are dropped by id: listing them is cheap (500 per request) and each one skipped saves a whole read.
+  // A list comes back newest first, so this stops at the start of the period
+  const promo = new Set();
+  let token = "", inPeriod = true;
+  do {
+    const page = await gget(`${API}/messages?labelIds=CATEGORY_PROMOTIONS&maxResults=500${token ? "&pageToken=" + token : ""}`);
+    for (const m of page.messages || []) {
+      if (idTime(m.id) >= since) promo.add(m.id);
+      else inPeriod = false;
+    }
+    token = page.nextPageToken;
+  } while (token && inPeriod);
+
+  let ids = [], skipped = 0, oldest = Infinity;
   do {
     const page = await gget(`${API}/messages?maxResults=500${token ? "&pageToken=" + token : ""}`);
     for (const m of page.messages || []) {
       const t = idTime(m.id);
       if (t < oldest) oldest = t;
-      if (t >= since) ids.push(m);
+      if (t < since) continue;
+      if (promo.has(m.id)) skipped++;
+      else ids.push(m);
     }
     token = page.nextPageToken;
     stage("list", "now", fmtN(ids.length));
@@ -198,7 +213,7 @@ async function readMailbox() {
   if (engineErr) throw new Error("המנוע לא נטען (" + engineErr + ")");
   const account = [...senders.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
   const today = new Date().toLocaleDateString("sv-SE");
-  S.run = { messages: rows.length, listed: ids.length, mailbox_since: isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null };
+  S.run = { messages: rows.length, listed: ids.length, skipped_promotions: skipped, mailbox_since: isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null };
   const result = await new Promise((res, rej) => {
     S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
     worker.postMessage({ type: "run", payload: {
@@ -342,7 +357,8 @@ function verdictRecord(id) {
 function statsRecord() {
   const st = S.result.stats;
   const out = { messages: st.messages, business_in: st.business_in, business_in_registered: st.business_in_registered,
-                business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs };
+                business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs,
+                skipped_promotions: S.run.skipped_promotions };
   if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
   return out;
 }
@@ -367,7 +383,7 @@ $("#to-feedback").addEventListener("click", () => {
   const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "—");
   $("#fb-stats").innerHTML = fbItem("stats", "all", "ספירות",
     `${fmtN(st.messages)} מיילים · ${fmtN(st.business_in)} מגופים · מזוהים ${pct(st.business_in_registered, st.business_in)} · ` +
-    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות`);
+    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${fmtN(st.skipped_promotions)} פרסומות שלא נקראו`);
 
   // Without the report these start unticked: a sender's address can hint at what someone uses
   const unknownOn = !isPrivate();
