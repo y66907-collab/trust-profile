@@ -637,6 +637,7 @@ async function readMailbox() {
   const toOpen = new Set();
   await pool(SIGNAL_QUERIES, 8, async (q) => { (await search(q)).forEach((m) => toOpen.add(m.id)); });
   sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
+  if ($("#ai-ok").checked) await pool(AI_TOPICS, 4, async (q) => { (await search(q)).slice(0, 25).forEach((m) => toOpen.add(m.id)); });
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
   const readOut = await readRelevant(search, pool, drop, senders).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
@@ -692,6 +693,7 @@ async function readMailbox() {
       });
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
+      await askAi(last.r).catch((e) => console.warn("AI paragraph stopped", e));
       applyFinal(last.r);
     } catch (e) {
       console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
@@ -716,6 +718,7 @@ function showBackground(done, total) {
 // The final run replaces the report. Answers follow their row by its key, since rows can appear and move, and an answer
 // on a value that has since changed is dropped: it was about something else
 function applyFinal(r) {
+  attachAi(r);
   const index = (res) => {
     const m = new Map();
     res.groups.forEach((g, gi) => g.params.forEach((p, pi) => m.set(p.key, { id: `${gi}.${pi}`, p })));
@@ -793,6 +796,42 @@ const valHtml = (p) => (p.links ? p.links.filter((l) => /^https:\/\//.test(l.url
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
 const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
+// ---------------------------------------------------------------- the AI paragraph
+// Only with the box ticked. The engine prepares the subjects (no digits, no addresses, no names it knows, no personal
+// or excluded senders); nothing else goes out, and the participant's name is not sent. Each sentence becomes a report row
+// with its own V, so it can be struck out like any other. Any failure just leaves the rows out
+// Subjects are known only for mail that was opened, so these topics get opened too (the envelope only, never the body)
+const AI_TOPICS = [
+  'subject:(משכנתא OR נכס OR טאבו OR "הסכם מכר" OR "חוזה מכר" OR "מס רכישה" OR "רישום זכויות" OR "ועד בית")',
+  'subject:("מעבר דירה" OR "שינוי כתובת" OR "העברת חשבון" OR "החלפת משלם" OR ארנונה)',
+  'subject:(סמסטר OR "אישור לימודים" OR תואר OR מלגה OR "שכר לימוד" OR קורס OR הסמכה OR certificate)',
+  'subject:("כתב מינוי" OR קידום OR "חוזה העסקה" OR "אישור העסקה" OR offer OR promotion)',
+  'subject:("עוסק מורשה" OR "עוסק פטור" OR "רשם החברות" OR "דוח שנתי" OR "פתיחת תיק")',
+  'subject:(תחרות OR אליפות OR זכית OR "מקום ראשון" OR תעודה OR competition OR winner)',
+  'subject:(התנדבות OR מילואים OR הרצאה OR כנס OR conference)',
+  'in:sent subject:(חוזה OR הסכם OR משכנתא OR "מעבר דירה" OR ביטוח)',
+];
+const AI_GROUP = "מה AI הבין מהנושאים";
+const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
+async function askAi(r) {
+  if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
+  const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(90000),
+    body: JSON.stringify({ kind: "imtrustme-ai", items: r.ai_input.map((x) => [x.d, x.o, x.s]) }) }).then((x) => x.json());
+  if (!reply.ok) { console.warn("AI paragraph not written:", reply.error); return; }
+  S.ai = (reply.sentences || []).filter((x) => typeof x.text === "string" && x.text.length <= 220 && !AI_BLOCKED.test(x.text) &&
+    Array.isArray(x.sources) && x.sources.length && x.sources.every((i) => Number.isInteger(i) && i >= 0 && i < r.ai_input.length)).slice(0, 12);
+  S.run.ai_sentences = S.ai.length;
+}
+function attachAi(r) {
+  if (!S.ai?.length || r.groups.some((g) => g.title === AI_GROUP)) return;
+  r.groups.push({ title: AI_GROUP, params: S.ai.map((x, i) => ({ label: `משפט ${i + 1}`, v: x.text, n: x.sources.length, span: "", why: null,
+    note: "נכתב על ידי AI מנושאי מיילים, ייתכנו טעויות", key: `ai_${i}`, fb_label: `משפט AI ${i + 1}`, detail: false, private: false, outcome: "found" })) });
+}
+function aiText() {
+  const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP);
+  return gi < 0 ? "" : S.result.groups[gi].params.filter((_, pi) => !isHidden(`${gi}.${pi}`)).map((p) => p.v).join(" ");
+}
+
 // The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
 function portraitText() {
   const ids = {};
@@ -807,9 +846,11 @@ function portraitText() {
   return parts.map((p) => (Array.isArray(p) ? `${p.title}: ${p.join(", ")}.` : p)).join(" ");
 }
 function showPortrait(card) {
-  const text = portraitText();
-  $(`${card}`).hidden = !text;
+  const text = portraitText(), ai = aiText();
+  $(`${card}`).hidden = !text && !ai;
   $(`${card} .portrait-text`).textContent = text;
+  $(`${card} .portrait-ai`).hidden = !ai;
+  $(`${card} .portrait-ai-text`).textContent = ai;
 }
 function renderReport() {
   showPortrait("#rep-portrait");
@@ -1058,7 +1099,7 @@ function statsRecord() {
                 business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs,
                 skipped_promotions: S.run.skipped_promotions, reads: S.run.reads, report_seconds: S.run.report_seconds,
                 read_seconds: S.run.read_seconds, complete: S.run.complete,
-                body_reads: S.run.body_reads, pdf_read: S.run.pdf_read, pdf_failed: S.run.pdf_failed };
+                body_reads: S.run.body_reads, pdf_read: S.run.pdf_read, pdf_failed: S.run.pdf_failed, ai_sentences: S.run.ai_sentences ?? null };
   if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
   return out;
 }

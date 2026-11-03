@@ -55,6 +55,7 @@ function fixture() {
   add(91, "", "פרטי משכנתא", true);
   add(92, "", "תיאום טכנאי אחרי מעבר דירה", true);
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
+  add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
@@ -103,7 +104,7 @@ async function run(browser, mode) {
     r.fulfill({ body: fs.readFileSync(f), contentType: type, headers: { "access-control-allow-origin": "*" } });
   });
   // the mail script: the full mode fails once first, to prove the answers survive a failed send
-  const posts = [], searches = [], registryCalls = [];
+  const posts = [], searches = [], registryCalls = [], aiCalls = [];
   await ctx.route("https://data.gov.il/**", (r) => {
     registryCalls.push(r.request().url());
     const own = r.request().url().includes("f004176c"); // the company registry
@@ -114,6 +115,14 @@ async function run(browser, mode) {
   let failNext = mode === "full";
   await ctx.route("https://script.google.com/**", (r) => {
     const headers = { "access-control-allow-origin": "*" };
+    if (JSON.parse(r.request().postData()).kind === "imtrustme-ai") {
+      aiCalls.push(r.request().postData());
+      return r.fulfill({ body: JSON.stringify({ ok: true, sentences: [
+        { text: "מיילים על משכנתא ומעבר מגורים באותה תקופה.", sources: [0, 1] },
+        { text: "אדם אמין ויסודי.", sources: [0] },
+        { text: "משפט בלי מקור.", sources: [] },
+      ] }), contentType: "application/json", headers });
+    }
     if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
       searches.push(r.request().postData());
       return r.fulfill({ body: JSON.stringify({ ok: true, results: [
@@ -179,7 +188,7 @@ async function run(browser, mode) {
   await page.check("#has-hh");
   await page.fill("#hh-name", HH_NAME);
   await page.click("#details-next");
-  if (mode === "private") await page.uncheck("#web-ok"); // this run also proves nothing goes out without the box
+  if (mode === "private") { await page.uncheck("#web-ok"); await page.uncheck("#ai-ok"); } // this run also proves nothing goes out without the boxes
   await page.click("#connect");
   await page.waitForSelector("#s-report.on", { timeout: 180000 });
   assert(await page.isVisible("#bg-status"), "no word about the work still running");
@@ -241,6 +250,7 @@ async function run(browser, mode) {
       assert.strictEqual(await page.locator("#rep-groups .group").count() > 3, true, "the report rows must stay under the paragraph");
     } else {
       assert.strictEqual(searches.length + registryCalls.length, 0, "the name went out with the box unticked");
+      assert.strictEqual(aiCalls.length, 0, "subjects went to the AI with the box unticked");
       assert.strictEqual(report.web_mentions, undefined, "web rows with the box unticked");
     }
     for (const leak of ["הרצל", "secrettoken", "other-person", "12345", "אילת", "seat"]) assert(!all.includes(leak), "from the mail's text: " + leak);
@@ -306,6 +316,18 @@ async function run(browser, mode) {
     assert((await page.textContent("#rev-groups")).includes(secret), "row value should be on the screen");
     await page.uncheck(`${row("longest_supplier")} [data-show]`);
     assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
+    // the AI sentences: only cleaned subjects went out, opinions are dropped, and each has its own V
+    await page.waitForFunction(() => document.querySelector("#rev-portrait .portrait-ai-text")?.textContent.includes("משכנתא"), null, { timeout: 120000 });
+    assert.strictEqual(aiCalls.length, 1, "AI calls");
+    for (const secret of [OWNER_HE, HH_NAME, ME, "123456789", "me@x.com", "partner@example.com"]) assert(!aiCalls[0].includes(secret), "leaked to AI: " + secret);
+    assert(aiCalls[0].includes("נסח טאבו"), "subjects must reach the AI");
+    assert(!/[0-9]/.test(JSON.stringify(JSON.parse(aiCalls[0]).items.map((x) => x[2]))), "digits in a subject sent to AI");
+    assert(!/maccabi|friend@/.test(aiCalls[0]), "an excluded or personal sender went to AI");
+    assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
+    assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
+    await page.uncheck(`[data-id="${await page.evaluate(() => { const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP); return gi + ".0"; })}"] [data-show]`);
+    assert(!(await page.textContent("#rev-portrait")).includes("ומעבר מגורים באותה"), "a struck AI sentence is still in the paragraph");
+    await page.check(`[data-id="${await page.evaluate(() => { const gi = S.result.groups.findIndex((g) => g.title === AI_GROUP); return gi + ".0"; })}"] [data-show]`);
     // a row blacked out takes its sentence out of the paragraph
     await page.uncheck(`${row("job_scope")} [data-show]`);
     assert(!(await page.textContent("#rev-portrait")).includes("80%"), "a blacked-out row is still in the paragraph");
