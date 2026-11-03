@@ -500,7 +500,6 @@ function applyFinal(r) {
     if (S.hidden?.has(id)) hidden.add(n.id);
     if (S.noteOpen?.has(id)) noteOpen.add(n.id);
   }
-  const fresh = [...after].filter(([key]) => !before.has(key)).map(([, n]) => n.id);
   S.result = r;
   if (!changed) return;
   S.verdicts = verdicts;
@@ -508,7 +507,6 @@ function applyFinal(r) {
   if (S.hidden) {
     S.hidden = hidden;
     S.noteOpen = noteOpen;
-    fresh.forEach((id) => { if (startsHidden(id)) S.hidden.add(id); });
   }
   if (S.mode) {
     S.checkList = [];
@@ -605,28 +603,11 @@ document.addEventListener("click", (e) => {
 });
 
 // ---------------------------------------------------------------- the report with redactions and comments
-// Start blacked out: findings someone may not want a relative to read. A row with nothing found stays open
-const SENSITIVE = new Set(["legal", "collection_notices", "bank_alerts", "payment_issues_12m", "payment_issues_all",
-                           "minor_payment_events", "loans", "mortgage", "credit_report"]);
 // A row that exists only for some people says something by its name alone, so blacking it out removes it completely
 const dropsWhole = (id) => (/^[sm]/.test(id) ? true : !param(id).private);
 
 function supplierText(x) { return `\u2066${x.first} – ${x.last}\u2069 · ${x.months} חודשים · ${x.active ? "פעיל" : "הסתיים"} · ${x.holder}`; }
 function minorText(m) { return `${m.n_in === 1 ? "הודעה אחת" : m.n_in + " הודעות"}, ${m.first.split("-").reverse().join(".")}. נסגר.`; }
-
-function startsHidden(id) {
-  if (id[0] === "m") return true;
-  if (id[0] === "s") return !["על שמך", "לא צוין שם"].includes(S.result.suppliers[+id.slice(1)].holder);
-  const p = param(id);
-  return (!p.private && !p.open) || (SENSITIVE.has(p.key) && p.outcome === "found");
-}
-function initHidden() {
-  if (S.hidden) return; // coming back keeps what was chosen
-  S.hidden = new Set();
-  const ids = [...S.result.groups.flatMap((g, gi) => g.params.map((_, pi) => `${gi}.${pi}`)),
-               ...S.result.suppliers.map((_, i) => `s${i}`), ...S.result.minor.map((_, i) => `m${i}`)];
-  ids.forEach((id) => { if (startsHidden(id)) S.hidden.add(id); });
-}
 
 function reviewRow(id) {
   const hidden = S.hidden.has(id), v = S.verdicts[id] || {};
@@ -658,7 +639,7 @@ function reviewCount() {
   $("#rev-count").textContent = `${all - off} גלויות · ${off} מושחרות`;
 }
 function renderReview() {
-  initHidden();
+  S.hidden ??= new Set(); // everything starts visible; only what the participant unticks is left out
   S.noteOpen ??= new Set();
   const r = S.result;
   const card = (title, ids) => `<div class="card group"><h2>${esc(title)}</h2>${ids.map(reviewRow).join("")}</div>`;

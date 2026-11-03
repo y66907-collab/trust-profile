@@ -171,6 +171,8 @@ textarea { min-height: 84px; resize: vertical; }
 .tile span { font-size: 14px; color: var(--muted); }
 
 /* the report with redactions */
+.other-way { text-align: center; margin: 22px 0 8px; }
+.other-way p { margin: 4px 0 0; }
 .rev-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
 .rv-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1.25fr); gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
 .rv-row:first-of-type { border-top: 0; }

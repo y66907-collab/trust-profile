@@ -151,23 +151,8 @@
       <ul class="minor" id="minor-list"></ul>
     </div>
     <div class="sticky"><div class="in">
-      <button class="btn" data-go="s-choose">המשך</button>
+      <button class="btn" data-mode="full">המשך</button>
     </div></div>
-  </section>
-
-  <!-- 5. what to share -->
-  <section class="screen" id="s-choose" data-step="4">
-    <h1>מה יגיע ל<span class="to-name"></span>?</h1>
-    <p class="lead">שתי הדרכים עוזרות. בוחרים מה שנוח לך.</p>
-    <button class="choice" data-mode="private">
-      <b>בלי הדוח</b>
-      <span>הדוח נשאר רק אצלך. <span class="to-name"></span> תקבל רק אם כל שורה נכונה או לא, בלי מה שכתוב בה.</span>
-    </button>
-    <button class="choice" data-mode="full">
-      <b>עם הדוח</b>
-      <span>רואים את הדוח המלא, משחירים כל שורה שלא רוצים לשתף ומגיבים איפה שרוצים. <span class="to-name"></span> תקבל במייל רק את מה שנשאר גלוי.</span>
-    </button>
-    <div class="actions"><button class="btn ghost" data-go="s-report">חזרה לדוח</button></div>
   </section>
 
   <!-- 6. row by row -->
@@ -197,18 +182,22 @@
       </div>
     </div>
     <div class="actions" style="margin-top:14px"><button class="link" id="chk-skip">מעדיף/ה לא לענות על השורה הזו</button></div>
+    <div class="actions" style="margin-top:6px"><button class="link" data-mode="full">בכל זאת לשלוח עם הדוח</button></div>
   </section>
 
   <!-- 6b. the report itself, with the participant's redactions and comments -->
   <section class="screen" id="s-review" data-step="5">
     <h1>מה יישלח מהדוח?</h1>
-    <p class="lead">מורידים את ה-V כדי להשחיר שורה. בכל שורה גלויה אפשר לסמן אם היא נכונה ולהגיב.</p>
-    <div class="card soft"><b>שורות רגישות מתחילות מושחרות.</b> הן יישלחו רק אם תסמנו בהן V.</div>
+    <p class="lead">כל מה שמסומן ב-V יישלח ל<span class="to-name"></span>. מורידים את ה-V כדי להשחיר שורה, ובכל שורה אפשר לסמן אם היא נכונה ולהגיב.</p>
     <div class="rev-tools">
       <span class="small" id="rev-count"></span>
       <span><button class="link" id="rev-none">להשחיר הכול</button> <button class="link" id="rev-all">לסמן הכול</button></span>
     </div>
     <div id="rev-groups"></div>
+    <div class="other-way">
+      <button class="link" data-mode="private">לא רוצה לשלוח את הדוח? נסו דרך אחרת</button>
+      <p class="small">אפשר לענות רק נכון או לא נכון, בלי שום דבר ממה שכתוב בדוח.</p>
+    </div>
     <div class="sticky"><div class="in">
       <button class="btn" data-go="s-questions">המשך</button>
     </div></div>
