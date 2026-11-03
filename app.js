@@ -413,7 +413,7 @@ const REGISTRIES = [
   { title: "קבלן/ית", id: "4eb61bd6-18cf-4e7c-9f9c-e166dfa0a2d8", name: (r) => r.SHEM_YESHUT || "", detail: (r) => `קבלן ${r.MISPAR_KABLAN}, ${r.TEUR_ANAF}`, city: (r) => r.SHEM_YISHUV || "" },
 ];
 const COMPANY_REGISTRY = { title: "חברה", id: "f004176c-b85f-4542-8901-7b3176f9a054", name: (r) => r["שם חברה"], detail: (r) => `ח.פ. ${r["מספר חברה"]}, ${r["סטטוס חברה"]}`, city: (r) => r["שם עיר"] || "" };
-const nameWords = (s) => String(s || "").replace(/["'`~\-–־.,()]/g, " ").toLowerCase().split(/\s+/).filter(Boolean);
+const nameWords = (s) => String(s || "").replace(/[‎‏‪-‮⁦-⁩]/g, " ").replace(/["'`~\-–־.,()|]/g, " ").toLowerCase().split(/\s+/).filter(Boolean);
 const hasAllWords = (text, name) => { const w = new Set(nameWords(text)); const q = nameWords(name); return q.length >= 2 && q.every((x) => w.has(x)); };
 const sameCity = (a, b) => { const x = nameWords(a).join(""), y = nameWords(b).join(""); return !!x && !!y && (x.includes(y) || y.includes(x)); };
 
@@ -463,7 +463,11 @@ async function lookupOutside(city, account) {
     if (!hasAllWords(`${h.title} ${h.snippet}`, nameHe) && !(nameEn && hasAllWords(`${h.title} ${h.snippet}`, nameEn))) continue;
     const domain = new URL(link).hostname.replace(/^www\./, "");
     const net = NETWORK_LINKS.map(([n, rx, make]) => { const m = rx.exec(link.split("?")[0]); return m && [n, make(m[1])]; }).find(Boolean);
-    if (net) { out.web_links[net[0]] ??= net[1]; continue; }
+    if (net) {
+      out.web_links[net[0]] ??= net[1];
+      if (net[0] === "LinkedIn") (S.linkedinHits ??= []).push({ url: net[1], text: `${h.title} ${h.snippet}` });
+      continue;
+    }
     if (/linkedin|facebook|instagram|tiktok|twitter|x\.com/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
     out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0] });
   }
@@ -802,6 +806,9 @@ const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread"
 // ---------------------------------------------------------------- the workplace
 // Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
 const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
+// Several people can share a name, so the page that mentions the workplace is the likelier one
+const bestProfile = (hits, employer) => hits.find((h) => nameWords(employer).every((w) => nameWords(h.text).includes(w)))?.url;
+const AGGREGATORS = /linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il|drushim|alljobs|jobmaster|checkid|dunsguide|bdi|theworker|rocketreach|theorg|maariv|ynet|globes|calcalist|themarker/;
 async function lookupEmployer(r) {
   if (!$("#web-ok").checked) return;
   const row = r.groups.flatMap((g) => g.params).find((p) => p.key === "employer");
@@ -810,13 +817,24 @@ async function lookupEmployer(r) {
   const settle = async (p) => { try { return await p; } catch (e) { console.warn("employer lookup failed", e); return []; } };
   const [records, hits] = await Promise.all([
     settle(fetch(`${REGISTRY_API}?resource_id=${COMPANY_REGISTRY.id}&limit=50&q=${encodeURIComponent(name)}`).then((x) => x.json()).then((x) => x.result?.records || [])),
-    settle(webHits([`"${name}"`])),
+    settle(webHits([`"${name}"`, `site:linkedin.com/company "${name}"`])),
   ]);
-  const record = records.find((x) => dropCompanyWords(x["שם חברה"]) === dropCompanyWords(name));
+  // The name people use is often shorter than the registered one. Only a single match counts, or it may be another company
+  const wanted = nameWords(dropCompanyWords(name));
+  const matches = records.filter((x) => wanted.length && wanted.every((w) => nameWords(x["שם חברה"]).includes(w)));
+  const record = new Set(matches.map((x) => x["מספר חברה"])).size === 1 ? matches[0] : null;
+  const better = bestProfile(S.linkedinHits || [], name);
+  const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");
+  if (better && profileRow?.note?.includes("מישהו אחר")) {
+    profileRow.link = better;
+    profileRow.v = better.split("//")[1].replace(/^www\./, "");
+    const item = (r.portrait || []).find((x) => x.label === "LinkedIn");
+    if (item) item.url = better;
+  }
   const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
   const clean = (u) => String(u || "").split(/[?#]/)[0];
   const linkedin = hits.map((h) => clean(h.link)).find((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/.test(u));
-  const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !/linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il/.test(new URL(h.link).hostname) &&
+  const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !AGGREGATORS.test(new URL(h.link).hostname) &&
     nameWords(h.title).some((w) => nameWords(name).includes(w)));
   const lead = record ? [`${record["סטטוס חברה"]}`, year && `התאגדה ב-${year}`, record["שם עיר"]].filter(Boolean).join(", ") : "";
   const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, linkedin && { text: `${name} ב-LinkedIn`, url: linkedin }].filter(Boolean);
