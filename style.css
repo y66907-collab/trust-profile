@@ -105,12 +105,23 @@ textarea { min-height: 84px; resize: vertical; }
 .rep-head .who { font-size: 26px; font-weight: 700; }
 .rep-head .meta { font-size: 14px; color: var(--muted); }
 .group h2 { font-size: 18px; color: var(--tq-deep); margin: 0 0 6px; }
-.row { border-top: 1px solid var(--line); padding: 14px 0; }
+.row { border-top: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, .8fr); gap: 16px; align-items: baseline; }
 .row:first-of-type { border-top: 0; }
-.row .lab { font-size: 14px; color: var(--muted); }
+.row .lab { font-size: 15px; color: var(--muted); }
 .row .val { font-weight: 600; font-size: 17px; overflow-wrap: anywhere; }
 .row .val.none { font-weight: 400; color: var(--muted); }
 .row .ev { font-size: 13px; color: var(--muted); }
+.rep-sub { margin: 4px 0 0; max-width: 40ch; }
+.rep-box { background: var(--tq-soft); border-radius: 12px; padding: 12px 16px; display: grid; gap: 4px; min-width: 240px; font-size: 14px; }
+.rep-box div { display: flex; justify-content: space-between; gap: 18px; }
+.rep-box span { color: var(--muted); }
+.rep-note { border-inline-start: 3px solid var(--tq); background: var(--card); padding: 10px 14px; margin-bottom: 16px; font-size: 15px; }
+.table-wrap { overflow-x: auto; }
+.suppliers { width: 100%; border-collapse: collapse; font-size: 15px; }
+.suppliers th { text-align: start; font-size: 13px; color: var(--muted); font-weight: 600; padding: 8px 8px 8px 0; border-bottom: 2px solid var(--ink); }
+.suppliers td { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.suppliers td:first-child { font-weight: 600; white-space: normal; }
+.bg-status { background: var(--tq-soft); border-bottom: 1px solid var(--tq-line); color: var(--tq-deep); font-size: 14px; padding: 7px 20px; text-align: center; }
 .minor li { margin-bottom: 4px; }
 
 /* feedback preview */
@@ -153,6 +164,7 @@ textarea { min-height: 84px; resize: vertical; }
 .wrong-more .f { font-weight: 600; }
 
 @media (max-width: 560px) {
+  .row { grid-template-columns: 1fr; gap: 2px; }
   body { font-size: 16px; }
   h1 { font-size: 25px; }
   .lead { font-size: 17px; }

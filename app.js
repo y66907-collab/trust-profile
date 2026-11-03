@@ -9,12 +9,22 @@ const READ_UNITS = 20, LIST_UNITS = 5, UNIT_MS = 11; // 11 ms a unit keeps just 
 const PERSONAL_DOMAINS = ["gmail.com", "walla.co.il", "walla.com", "hotmail.com", "outlook.com", "yahoo.com", "012.net.il",
   "netvision.net.il", "bezeqint.net", "013net.net", "icloud.com", "live.com", "googlemail.com"]; // same list as engine.py
 const PLATFORM_DOMAINS = ["linkedin.com", "facebookmail.com", "facebook.com", "instagram.com", "mail.instagram.com", "github.com"]; // pilot.py
+// Interests come from a closed list of everyday senders, counted by address alone. Nothing that can reveal religion, health,
+// politics or community goes on it (so no news or newsletters): product rule 3
+const INTERESTS = [
+  { key: "fitness", label: "כושר וספורט", domains: ["crossfit.com", "trainheroic.com", "myprotein.com", "strava.com", "garmin.com"] },
+  { key: "tech", label: "טכנולוגיה ו-AI", domains: ["github.com", "supabase.com", "vercel.com", "anthropic.com", "openai.com", "bubble.io", "pipedream.com", "zoom.us", "cursor.com"] },
+  { key: "career", label: "קריירה וחיפוש עבודה", domains: ["greenhouse-mail.io", "comeet.co", "lever.co", "workablemail.com", "alljobs.co.il", "drushim.co.il", "glassdoor.com"] },
+  { key: "travel", label: "נסיעות וטיסות", domains: ["booking.com", "airbnb.com", "ryanair.com", "elal.co.il", "skygini.com", "skyscanner.com", "issta.co.il", "wizzair.com", "easyjet.com", "expedia.com", "agoda.com"] },
+  { key: "shopping", label: "קניות אונליין", domains: ["amazon.com", "aliexpress.com", "ebay.com", "ksp.co.il", "ivory.co.il", "shein.com", "next.co.il", "email.apple.com", "samsung.com"] },
+  { key: "entertainment", label: "מוזיקה וסטרימינג", domains: ["netflix.com", "spotify.com", "disneyplus.com", "apple.com"] },
+];
 // One search for each report row that reads a mail's wording. Whatever comes back is opened, and pilot.py decides on the real subject
 const SIGNAL_QUERIES = [
   'subject:"כתב תביעה"', 'subject:"תביעה קטנה"', 'subject:"בית משפט"', 'subject:"בית המשפט"', 'subject:"הוצאה לפועל"',
   'subject:"רשות האכיפה"', "subject:עיקול", "subject:chargeback", 'subject:"הכחשת עסקה"',
   'subject:"חשבון מוגבל"', 'subject:"שיק חוזר"', 'subject:"שיקים חוזרים"', 'subject:"חריגה ממסגרת"', 'subject:"הגבלת חשבון"', 'subject:"התראה לפני הגבלה"',
-  'subject:"הסכם הלוואה"', 'subject:"שינוי כתובת מגורים"', "subject:משכנתא",
+  'subject:"הסכם הלוואה"', 'subject:"נתוני אשראי"', 'subject:"דוח אשראי"', 'subject:"דירוג אשראי"', "subject:BDI", 'subject:"שינוי כתובת מגורים"', "subject:משכנתא",
   'subject:"תלוש שכר"', 'subject:"תלוש משכורת"', 'subject:"תלוש לחודש"', "subject:payslip",
   "subject:(רבעוני OR תקופתי OR שנתי) subject:(פנסיה OR גמל OR השתלמות)",
 ];
@@ -312,6 +322,13 @@ async function readMailbox() {
     (await search(`to:${d} in:sent`)).forEach((m) => { const r = place(m, {}); if (r && !r.real) r.to = "x@" + d; });
     show();
   });
+  // interests: promotions count here, since they are what shows what someone follows. Only the sender and the date are used
+  const interests = [];
+  await pool(INTERESTS.flatMap((t) => t.domains.map((d) => [t, d])), 8, async ([t, d]) => {
+    const found = await search(`from:${d}`);
+    if (found.length) interests.push({ key: t.key, label: t.label, domain: d, n: found.length,
+      first: Math.min(...found.map((m) => idTime(m.id))), last: Math.max(...found.map((m) => idTime(m.id))) });
+  });
   // what kind of mail each is: the engine labels a mail by a phrase of its subject, so the phrase it was found by is enough.
   // Applied in the rules' order: first rule wins, as in the engine
   const hits = new Array(labels.length);
@@ -332,51 +349,75 @@ async function readMailbox() {
   sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
   await pool([...toOpen], 4, open);
 
-  // everyone else: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail is left unaccounted for
-  const asked = new Set([...known, ...PERSONAL_DOMAINS]);
-  const queue = [...pending.keys()].sort((a, b) => idTime(b) - idTime(a));
-  await pool(Array.from({ length: 4 }), 4, async () => {
-    while (queue.length) {
-      const id = queue.shift();
-      if (!pending.has(id)) continue;
-      const row = await open(id);
-      const d = row?.from.split("@")[1];
-      if (!d || asked.has(d)) continue;
-      asked.add(d);
-      (await search(`from:${d}`)).forEach((m) => { const r = place(m, {}); if (r && !r.real && !r.sent) r.from = "x@" + d; });
-      show();
-    }
-  });
-  const out = [...rows.values()].map(({ real, ...r }) => (!real && named.has(r.id) ? { ...r, subject: `${r.subject} ${named.get(r.id)}`.trim() } : r));
-  stage("read", "done", fmtN(out.length));
-
-  // 3. access is no longer needed: revoke before the engine even starts
-  stage("revoke", "now");
-  await revoke();
-  stage("revoke", "done");
-
-  // 4. engine
+  // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
+  stage("read", "done", fmtN(total - pending.size));
   stage("engine", "now");
   $("#eta").textContent = engineReady ? "" : "מטעינים את המנוע…";
   await whenEngine();
   if (engineErr) throw new Error("המנוע לא נטען (" + engineErr + ")");
-  const account = [...senderName.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
   const today = new Date().toLocaleDateString("sv-SE");
-  S.run = { messages: out.length, listed: total, skipped_promotions: skipped, reads, read_seconds: Math.round((performance.now() - t0) / 1000),
-            mailbox_since: isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null };
-  const result = await new Promise((res, rej) => {
-    S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
-    worker.postMessage({ type: "run", payload: {
-      today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-      sent_checked: sentChecked, mailbox_since: S.run.mailbox_since } });
-  });
-  out.length = 0; rows.clear(); // the envelopes are not kept once the profile exists
+  const mailbox_since = isFinite(oldest) ? new Date(oldest).toLocaleDateString("sv-SE") : null;
+  const runEngine = () => {
+    const out = [...rows.values()].map(({ real, ...r }) => (!real && named.has(r.id) ? { ...r, subject: `${r.subject} ${named.get(r.id)}`.trim() } : r));
+    const account = [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] || "";
+    const counted = out.length;
+    return new Promise((res, rej) => {
+      S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
+      worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
+        sent_checked: sentChecked, mailbox_since, interests } });
+    }).then((r) => ({ r, counted }));
+  };
+  const first = await runEngine();
+  S.run = { messages: first.counted, listed: total, skipped_promotions: skipped, reads, complete: false, mailbox_since,
+            report_seconds: Math.round((performance.now() - t0) / 1000) };
+  S.result = first.r;
   stage("engine", "done");
   bar(1);
-  window.onbeforeunload = null;
-  S.result = result;
   renderReport();
   go("s-report");
+  showBackground(total - pending.size, total);
+
+  // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
+  // is left unaccounted for. This only adds to the counts and to the list of senders the engine doesn't know yet
+  S.background = (async () => {
+    try {
+      const asked = new Set([...known, ...PERSONAL_DOMAINS]);
+      const queue = [...pending.keys()].sort((x, y) => idTime(y) - idTime(x));
+      await pool(Array.from({ length: 4 }), 4, async () => {
+        while (queue.length) {
+          const id = queue.shift();
+          if (!pending.has(id)) continue;
+          const row = await open(id);
+          const d = row?.from.split("@")[1];
+          if (d && !asked.has(d)) {
+            asked.add(d);
+            (await search(`from:${d}`)).forEach((m) => { const r = place(m, {}); if (r && !r.real && !r.sent) r.from = "x@" + d; });
+          }
+          showBackground(total - pending.size, total);
+        }
+      });
+      const last = await runEngine();
+      Object.assign(S.run, { messages: last.counted, reads, complete: true });
+      S.result.stats = last.r.stats;
+      S.result.unknown = last.r.unknown;
+    } catch (e) {
+      console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
+      S.run.reads = reads;
+    }
+    S.run.read_seconds = Math.round((performance.now() - t0) / 1000);
+    await revoke();
+    rows.clear(); // the envelopes are not kept once the profile exists
+    window.onbeforeunload = null;
+    showBackground();
+  })();
+}
+
+function showBackground(done, total) {
+  const el = $("#bg-status");
+  el.hidden = false;
+  el.textContent = total === undefined
+    ? "הבדיקה הסתיימה, והגישה ל-Gmail בוטלה."
+    : `ברקע ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). אפשר להמשיך כרגיל. הגישה ל-Gmail תתבטל כשזה ייגמר.`;
 }
 
 async function revoke() {
@@ -402,13 +443,19 @@ function renderReport() {
   const r = S.result;
   $("#rep-name").textContent = S.owner.name_he;
   const d = r.today.split("-").reverse().join(".");
-  $("#rep-meta").innerHTML = `${d}<br>${fmtN(r.stats.messages)} מיילים, ${CFG.years} שנים`;
+  const ymOf = (x) => x.slice(0, 7).split("-").reverse().join(".");
+  const range = r.stats.date_range;
+  $("#rep-meta").innerHTML = [["הופק", d], ["תקופה", range ? `<bdi dir="ltr">${esc(ymOf(range[0]))} – ${esc(ymOf(range[1]))}</bdi>` : "—"],
+    ["מיילים בתקופה", fmtN(S.run.listed)]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
   $("#rep-groups").innerHTML = r.groups.map((g) => `
     <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>
         <div class="val ${p.v === null ? "none" : ""}">${esc(valText(p))}</div>
         <div class="ev">${evLine(p)}</div>
       </div>`).join("")}</div>`).join("");
+  $("#rep-suppliers").hidden = !r.suppliers.length;
+  $("#supplier-rows").innerHTML = r.suppliers.map((x) => `<tr><td>${esc(x.org_he)}</td><td><bdi dir="ltr">${esc(x.first)} – ${esc(x.last)}</bdi></td>
+    <td>${x.months}</td><td>${x.active ? "פעיל" : "הסתיים"}</td><td>${esc(x.holder)}</td></tr>`).join("");
   $("#rep-minor").hidden = !r.minor.length;
   $("#minor-list").innerHTML = r.minor.map((m) =>
     `<li>${esc(m.org_he)}: ${m.n_in === 1 ? "הודעה אחת" : m.n_in + " הודעות"}, ${esc(m.first.split("-").reverse().join("."))}. נסגר.</li>`).join("");
@@ -508,12 +555,20 @@ function statsRecord() {
   const st = S.result.stats;
   const out = { messages: st.messages, business_in: st.business_in, business_in_registered: st.business_in_registered,
                 business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs,
-                skipped_promotions: S.run.skipped_promotions, reads: S.run.reads, read_seconds: S.run.read_seconds };
+                skipped_promotions: S.run.skipped_promotions, reads: S.run.reads, report_seconds: S.run.report_seconds,
+                read_seconds: S.run.read_seconds, complete: S.run.complete };
   if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
   return out;
 }
 
-$("#to-feedback").addEventListener("click", () => {
+$("#to-feedback").addEventListener("click", async () => {
+  // the preview has to show what will really go out, so it waits for the last of the count
+  const btn = $("#to-feedback"), label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "מסיימים לעבור על השולחים…";
+  await S.background;
+  btn.disabled = false;
+  btn.textContent = label;
   const A = [["q-overall", "כמה נכון בסך הכול", radio("q-overall")], ["q-ux", "מה היה מבלבל", $("#q-ux").value.trim()]].filter((a) => a[2]);
   S.answers = Object.fromEntries(A.map((a) => [a[0], a[2]]));
   $("#fb-private-note").hidden = !isPrivate();
@@ -533,7 +588,7 @@ $("#to-feedback").addEventListener("click", () => {
   const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "—");
   $("#fb-stats").innerHTML = fbItem("stats", "all", "ספירות",
     `${fmtN(st.messages)} מיילים · ${fmtN(st.business_in)} מגופים · מזוהים ${pct(st.business_in_registered, st.business_in)} · ` +
-    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${fmtN(st.skipped_promotions)} פרסומות שדולגו · ${fmtN(st.reads)} מיילים שנפתחה הכותרת שלהם · ${fmtN(st.read_seconds)} שניות`);
+    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${fmtN(st.skipped_promotions)} פרסומות שדולגו · ${fmtN(st.reads)} מיילים שנפתחה הכותרת שלהם · ${fmtN(st.read_seconds)} שניות${st.complete ? "" : " · הספירה חלקית"}`);
 
   // Without the report these start unticked: a sender's address can hint at what someone uses
   const unknownOn = !isPrivate();
