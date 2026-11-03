@@ -129,6 +129,25 @@ async function run(browser, mode) {
   assert(await page.isVisible("#bg-status"), "no word about the work still running");
   await page.evaluate(() => S.background);
   assert.strictEqual(await page.evaluate(() => S.run.complete), true, "the background read did not finish");
+  // a final result that moves rows and changes a value: answers follow their row, and the changed row's answer is dropped
+  const remap = await page.evaluate(() => {
+    const original = S.result;
+    const idOf = (res, key) => { for (const [gi, g] of res.groups.entries()) for (const [pi, p] of g.params.entries()) if (p.key === key) return `${gi}.${pi}`; };
+    S.verdicts = { [idOf(original, "city")]: { verdict: "correct" }, [idOf(original, "bank")]: { verdict: "wrong", note: "n" }, [idOf(original, "pension")]: { verdict: "correct" } };
+    S.hidden = new Set([idOf(original, "pension")]);
+    S.noteOpen = new Set();
+    const final = JSON.parse(JSON.stringify(original));
+    final.groups.reverse();
+    final.groups.flatMap((g) => g.params).find((p) => p.key === "bank").v = "ערך חדש";
+    applyFinal(final);
+    const out = { city: S.verdicts[idOf(final, "city")], bank: S.verdicts[idOf(final, "bank")], hidden: S.hidden.has(idOf(final, "pension")),
+                  changed: S.reportChanged, shown: document.querySelector("#rep-groups").textContent.includes("ערך חדש") };
+    S.verdicts = {}; S.hidden = null; S.noteOpen = null; S.reportChanged = false;
+    S.result = original;
+    renderReport();
+    return out;
+  });
+  assert.deepStrictEqual(remap, { city: { verdict: "correct" }, bank: { note: "n" }, hidden: true, changed: true, shown: true }, "the final report was not applied");
   assert.strictEqual(await page.evaluate(() => window.__revoked), "tok", "access was not revoked");
   assert.strictEqual(promoRead, 0, "a promotion was read");
   const run = await page.evaluate(() => S.run);

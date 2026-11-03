@@ -378,7 +378,7 @@ async function readMailbox() {
   showBackground(total - pending.size, total);
 
   // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
-  // is left unaccounted for. This only adds to the counts and to the list of senders the engine doesn't know yet
+  // is left unaccounted for. The final run replaces the report, so nothing is sent from a result that was only partial
   S.background = (async () => {
     try {
       const asked = new Set([...known, ...PERSONAL_DOMAINS]);
@@ -398,8 +398,7 @@ async function readMailbox() {
       });
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
-      S.result.stats = last.r.stats;
-      S.result.unknown = last.r.unknown;
+      applyFinal(last.r);
     } catch (e) {
       console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
       S.run.reads = reads;
@@ -416,8 +415,57 @@ function showBackground(done, total) {
   const el = $("#bg-status");
   el.hidden = false;
   el.textContent = total === undefined
-    ? "הבדיקה הסתיימה, והגישה ל-Gmail בוטלה."
-    : `ברקע ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). אפשר להמשיך כרגיל. הגישה ל-Gmail תתבטל כשזה ייגמר.`;
+    ? `הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.${S.reportChanged ? " הדוח התעדכן לפי כל השולחים, כדאי לעבור עליו שוב." : ""}`
+    : `ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). הדוח יכול עוד להתעדכן, ושום דבר לא יישלח לפני שזה נגמר.`;
+}
+
+// The final run replaces the report. Answers follow their row by its key, since rows can appear and move, and an answer
+// on a value that has since changed is dropped: it was about something else
+function applyFinal(r) {
+  const index = (res) => {
+    const m = new Map();
+    res.groups.forEach((g, gi) => g.params.forEach((p, pi) => m.set(p.key, { id: `${gi}.${pi}`, p })));
+    res.suppliers.forEach((x, i) => m.set(`s:${x.org_he}`, { id: `s${i}`, p: x }));
+    res.minor.forEach((x, i) => m.set(`m:${x.org_he}:${x.first}`, { id: `m${i}`, p: x }));
+    return m;
+  };
+  const before = index(S.result), after = index(r);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const stay = S.checkList?.[S.checkAt], stayKey = stay && param(stay).key;
+  let changed = before.size !== after.size;
+  const verdicts = {}, hidden = new Set(), noteOpen = new Set();
+  for (const [key, { id, p }] of before) {
+    const n = after.get(key);
+    if (!n) { changed = true; continue; }
+    if (!same(p, n.p)) changed = true;
+    const v = S.verdicts[id];
+    if (v) {
+      const kept = same(p.v, n.p.v) ? v : (v.note ? { note: v.note } : null);
+      if (kept) verdicts[n.id] = kept;
+    }
+    if (S.hidden?.has(id)) hidden.add(n.id);
+    if (S.noteOpen?.has(id)) noteOpen.add(n.id);
+  }
+  const fresh = [...after].filter(([key]) => !before.has(key)).map(([, n]) => n.id);
+  S.result = r;
+  if (!changed) return;
+  S.reportChanged = true;
+  S.verdicts = verdicts;
+  renderReport();
+  if (S.hidden) {
+    S.hidden = hidden;
+    S.noteOpen = noteOpen;
+    fresh.forEach((id) => { if (startsHidden(id)) S.hidden.add(id); });
+  }
+  if (S.mode) {
+    S.checkList = [];
+    S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => {
+      if (!isPrivate() || p.private) S.checkList.push(`${gi}.${pi}`);
+    }));
+    const at = S.checkList.findIndex((id) => param(id).key === stayKey);
+    S.checkAt = at < 0 ? 0 : at;
+    if (isPrivate()) renderCheck(); else renderReview();
+  }
 }
 
 async function revoke() {
@@ -507,14 +555,18 @@ const dropsWhole = (id) => (/^[sm]/.test(id) ? true : !param(id).private);
 function supplierText(x) { return `\u2066${x.first} – ${x.last}\u2069 · ${x.months} חודשים · ${x.active ? "פעיל" : "הסתיים"} · ${x.holder}`; }
 function minorText(m) { return `${m.n_in === 1 ? "הודעה אחת" : m.n_in + " הודעות"}, ${m.first.split("-").reverse().join(".")}. נסגר.`; }
 
+function startsHidden(id) {
+  if (id[0] === "m") return true;
+  if (id[0] === "s") return !["על שמך", "לא צוין שם"].includes(S.result.suppliers[+id.slice(1)].holder);
+  const p = param(id);
+  return !p.private || (SENSITIVE.has(p.key) && p.outcome === "found");
+}
 function initHidden() {
   if (S.hidden) return; // coming back keeps what was chosen
   S.hidden = new Set();
-  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => {
-    if (!p.private || (SENSITIVE.has(p.key) && p.outcome === "found")) S.hidden.add(`${gi}.${pi}`);
-  }));
-  S.result.suppliers.forEach((x, i) => { if (!["על שמך", "לא צוין שם"].includes(x.holder)) S.hidden.add(`s${i}`); });
-  S.result.minor.forEach((_, i) => S.hidden.add(`m${i}`));
+  const ids = [...S.result.groups.flatMap((g, gi) => g.params.map((_, pi) => `${gi}.${pi}`)),
+               ...S.result.suppliers.map((_, i) => `s${i}`), ...S.result.minor.map((_, i) => `m${i}`)];
+  ids.forEach((id) => { if (startsHidden(id)) S.hidden.add(id); });
 }
 
 function reviewRow(id) {
@@ -715,6 +767,7 @@ $("#to-feedback").addEventListener("click", async () => {
   const A = [["q-overall", "כמה נכון בסך הכול", radio("q-overall")], ["q-ux", "מה היה מבלבל", $("#q-ux").value.trim()]].filter((a) => a[2]);
   S.answers = Object.fromEntries(A.map((a) => [a[0], a[2]]));
   $("#fb-private-note").hidden = !isPrivate();
+  $("#fb-partial").hidden = !!S.run.complete;
   $("#fb-answers-card").hidden = !A.length;
   $("#fb-answers").innerHTML = A.map((a) => fbItem("answers", a[0], a[1], a[2])).join("");
 
