@@ -58,7 +58,10 @@ INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
 BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
               "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
-         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations", "מיילים על הזמנות ומשלוחים": "orders",
+         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
+         "היקף משרה": "job_scope", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
+         "מיילים ששלחת על חוזים": "contracts_sent",
+         "אזכורים ברשת": "web_mentions", "רישיונות במאגרים ציבוריים": "licenses", "חברות על השם שלך": "companies_registry", "מיילים על הזמנות ומשלוחים": "orders",
                 "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
                 "מיילים אישיים עם תודה בנושא": "thanks", "מנויים וחיובים חוזרים": "subscriptions",
                 "התראות אבטחה בתיבה": "security", "מסמכי הכנסה שיושבים בתיבה": "documents"}
@@ -239,10 +242,13 @@ def run(payload_json: str) -> str:
     for name, doms in PLATFORMS:
         ms = [m for m in msgs if m.direction == "in" and any(m.domain == d or m.domain.endswith("." + d) for d in doms)]
         link = (p.get("read_out") or {}).get("links", {}).get(name)
-        if len(ms) >= 5 or link:
+        found_online = None if link else (p.get("outside") or {}).get("web_links", {}).get(name)
+        if len(ms) >= 5 or link or found_online:
             row = P("חשבון קיים על הכתובת המחוברת", ms)
-            if link:
-                row["v"], row["link"] = link.split("//")[1].removeprefix("www."), link
+            if link or found_online:
+                row["v"], row["link"] = (link or found_online).split("//")[1].removeprefix("www."), link or found_online
+            if found_online:
+                row["note"] = "נמצא בחיפוש לפי השם, ייתכן שזה מישהו אחר"
             plat_rows.append((name, row))
     own_bills = [m for m in billing if m.holder == "owner"]
     hh_rels = [e for e in rel if e.holder == "household"]
@@ -389,7 +395,8 @@ def run(payload_json: str) -> str:
                 ("מיילים על חיפוש עבודה", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
                 ("יעדי טיסה", fact(", ".join(ro.get("destinations") or []) or 0, len(ro.get("destinations") or []))),
                 ("מיילים על הזמנות ומשלוחים", life_row("orders")), ("קורסים, כנסים והרצאות", life_row("learning")),
-                ("מיילים על חוזים והסכמים", life_row("contracts")), ("ערעורים ותלונות ששלחת", life_row("disputes")),
+                ("מיילים על חוזים והסכמים", life_row("contracts")), ("מיילים ששלחת על חוזים", life_row("contracts_sent")),
+                ("מיילים על הוראות קבע", life_row("standing_orders")), ("ערעורים ותלונות ששלחת", life_row("disputes")),
                 ("מיילים אישיים עם תודה בנושא", life_row("thanks")),
                 ("מנויים וחיובים חוזרים", fact(", ".join(k for k, _ in subs[:8]) if subs else 0, len(subs),
                                               note="חשבוניות או קבלות ב-3 חודשים לפחות")),
@@ -399,6 +406,82 @@ def run(payload_json: str) -> str:
             ]),
         ]
         groups = top + groups + rest
+
+    # ---- the web and the public registries: by name only, so each row says it may be someone else
+    out = p.get("outside") or {}
+    if out.get("mentions") or out.get("licenses") or out.get("companies"):
+        by_name = "לפי השם, ייתכן שזה מישהו אחר"
+        web_rows = []
+        if out.get("mentions"):
+            web_rows.append(("אזכורים ברשת", {**fact(" · ".join(m["text"] for m in out["mentions"]), note=by_name), "links": out["mentions"]}))
+        if out.get("licenses"):
+            web_rows.append(("רישיונות במאגרים ציבוריים", fact(" · ".join(out["licenses"]), note=by_name)))
+        if out.get("companies"):
+            web_rows.append(("חברות על השם שלך", fact(" · ".join(out["companies"]), note=by_name)))
+        groups = groups + [("ברשת ובמאגרים", web_rows)]
+
+    # ---- rows the paragraph needs
+    work_rows = next(rows for t, rows in groups if t == "עבודה והכנסה")
+    if ro.get("job_scope"):
+        work_rows.append(("היקף משרה", fact(f"{ro['job_scope']['pct']}%", ro["job_scope"]["mails"], note="מתוך תלושים שנקראו")))
+    two_years_ago = f"{int(today[:4]) - 2}{today[4:]}"
+    academic = Counter(m.domain for m in readable if m.direction == "in" and m.domain.endswith(".ac.il") and m.sent_at >= two_years_ago)
+    if sum(academic.values()) >= 3:
+        work_rows.append(("מוסד אקדמי בתיבה", P(", ".join(d for d, _ in academic.most_common(2)),
+                                                [m for m in readable if m.domain in academic and m.sent_at >= two_years_ago])))
+
+    # ---- the paragraph. Fixed sentences, each from one row and each saying only what that row says: no adjectives about
+    # the person and no conclusion. Few numbers on purpose; the numbers are in the rows
+    every_row = {name: r for _, rows in groups for name, r in rows}
+
+    def has(label, at_least=None):
+        r = every_row.get(label)
+        if not r or r["v"] is None or r["v"] in NOTHING_FOUND:
+            return None
+        return r if at_least is None or (r.get("n") or 0) >= at_least else None
+
+    portrait = []
+
+    def say(label, text, join=None):
+        portrait.append({"label": label, "text": text, **({"join": join} if join else {})})
+
+    if r := has("עיר מגורים לפי חשבונות"):
+        say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
+    if (r := has("מעסיק לפי מיילים")) and "שולח" not in (r.get("note") or ""):  # the sender of the slips may be a payroll firm
+        say("מעסיק לפי מיילים", f"עבודה ב{r['v']}.")
+    if r := has("היקף משרה"):
+        say("היקף משרה", f"היקף משרה של {r['v']}.")
+    if r := has("מוסד אקדמי בתיבה"):
+        say("מוסד אקדמי בתיבה", f"קשר בשנתיים האחרונות עם מוסד אקדמי: {r['v']}.")
+    if has("חיסכון פנסיוני פעיל"):
+        say("חיסכון פנסיוני פעיל", "חיסכון פנסיוני פעיל.")
+    if has("מיילים על הוראות קבע"):
+        say("מיילים על הוראות קבע", "תשלומים בהוראת קבע.")
+    alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
+    if has(alerts):
+        say(alerts, "יש בתיבה התראות מהבנק.")
+    elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
+        say(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
+    if has("ספקים לאורך שנתיים ומעלה"):
+        say("ספקים לאורך שנתיים ומעלה", "קשר של שנתיים ומעלה עם ספקים קבועים.")
+    if has("מיילים ששלחת על חוזים", 2):
+        say("מיילים ששלחת על חוזים", "התכתבות יוצאת על חוזים והסכמים.")
+    if has("קורסים, כנסים והרצאות", 3):
+        say("קורסים, כנסים והרצאות", "מיילים על קורסים, כנסים והרצאות.")
+    if r := has("יעדי טיסה"):
+        say("יעדי טיסה", f"טיסות אל {r['v']}.")
+    for label, _ in interest_rows:
+        say(label, label, join="תחומי עניין")
+    for label, r in plat_rows:
+        if r.get("link"):
+            say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת")
+    for m in out.get("mentions") or []:
+        if re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
+            say("אזכורים ברשת", f"אזכור ברשת, לפי השם בלבד: {m['text']}.")
+    if r := has("רישיונות במאגרים ציבוריים"):
+        say("רישיונות במאגרים ציבוריים", f"במאגרים הציבוריים, לפי השם בלבד: {r['v']}.")
+    if r := has("חברות על השם שלך"):
+        say("חברות על השם שלך", f"ברשם החברות, לפי השם בלבד: {r['v']}.")
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]
@@ -436,6 +519,7 @@ def run(payload_json: str) -> str:
     return json.dumps({
         "rule_version": rules["version"], "today": today, "stats": stats,
         "groups": [{"title": t, "params": [{"label": l, **r, **row_meta(l, r)} for l, r in rows]} for t, rows in groups],
+        "portrait": portrait,
         "suppliers": [{"org_he": e.org_he, "first": ym(e.first), "last": ym(e.last), "months": e.months_active,
                        "active": e.status == "active", "holder": holder_he[e.holder]}
                       for e in sorted(rel, key=lambda e: -e.months_active)],

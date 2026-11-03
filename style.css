@@ -163,6 +163,12 @@ textarea { min-height: 84px; resize: vertical; }
 .wrong-more { margin-top: 14px; }
 .wrong-more .f { font-weight: 600; }
 
+.web-ok { display: grid; grid-template-columns: 24px 1fr; gap: 10px; cursor: pointer; }
+.web-ok input { width: 20px; height: 20px; accent-color: var(--tq); margin-top: 3px; }
+.row-link { display: block; margin-bottom: 4px; }
+
+.portrait-text { font-size: 18px; line-height: 1.7; margin: 6px 0 10px; }
+
 /* the numbers people came for */
 .hero { background: var(--tq-soft); border-color: var(--tq-line); }
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

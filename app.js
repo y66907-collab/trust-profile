@@ -29,6 +29,8 @@ const LIFE_QUERIES = {
   orders: "subject:(\"ההזמנה שלך\" OR \"your order\" OR משלוח OR shipped OR \"order confirmation\")",
   learning: "subject:(קורס OR כנס OR הרצאה OR webinar OR conference OR meetup OR course)",
   contracts: "subject:(חוזה OR הסכם OR contract OR agreement)",
+  contracts_sent: "in:sent subject:(חוזה OR הסכם OR contract OR agreement)",
+  standing_orders: 'subject:"הוראת קבע"',
   disputes: "in:sent subject:(ערעור OR השגה OR תלונה OR complaint)",
   thanks: "from:gmail.com subject:תודה",
   security: "subject:(\"התראת אבטחה\" OR \"security alert\" OR \"new sign-in\" OR \"כניסה חדשה\")",
@@ -237,6 +239,7 @@ const fmtN = (n) => n.toLocaleString("he-IL");
 // ---------------------------------------------------------------- reading the few mails that need it
 // Most of the mailbox stays unread. These searches pick mail about where someone lives, works and flies, newest first and
 // capped. The text stays in this function: only a city, an employer, destinations and profile links leave it
+const SCOPE_RX = /(?:היקף|אחוז|חלקיות)\s*משרה\D{0,12}(\d{2,3})/;
 const READ_TOPICS = {
   residence: { q: 'subject:(חוזה OR הסכם OR שכירות OR ארנונה OR עירייה OR "תאגיד המים" OR "חשבון מים")', max: 40, pdf: true },
   work: { q: 'subject:("תלוש שכר" OR "תלוש משכורת" OR "אישור העסקה" OR "טופס 106" OR payslip)', max: 15, pdf: true },
@@ -358,12 +361,18 @@ async function readRelevant(search, pool, drop, senders) {
   out.city = Object.values(cities).sort((a, b) => b.votes - a.votes)[0] || null;
 
   const employers = {};
+  const scopes = {};
   await pool(await idsFor(READ_TOPICS.work.q, READ_TOPICS.work.max), 4, async (id) => {
     const g = await fetchMail(id);
     if (!g) return;
-    const m = EMPLOYER_RX.exec([textOf(g), ...(await pdfsOf(g))].join(" "));
+    const text = [textOf(g), ...(await pdfsOf(g))].join(" ");
+    const m = EMPLOYER_RX.exec(text);
     if (m) { const name = m[1].trim(); employers[name] = (employers[name] || 0) + 1; }
+    const pct = Number(SCOPE_RX.exec(text)?.[1]);
+    if (pct >= 10 && pct <= 100) scopes[pct] = (scopes[pct] || 0) + 1;
   });
+  const [scope, scopeN] = Object.entries(scopes).sort((a, b) => b[1] - a[1])[0] || [];
+  if (scope) out.job_scope = { pct: Number(scope), mails: scopeN };
   const [employer, employerN] = Object.entries(employers).sort((a, b) => b[1] - a[1])[0] || [];
   if (employerN >= 2) out.employer = { name: employer, mails: employerN };
 
@@ -386,6 +395,77 @@ async function readRelevant(search, pool, drop, senders) {
       if (u && /^[A-Za-z0-9._%-]+$/.test(u)) { out.links[name] = make(u); break; }
     }
   });
+  return out;
+}
+
+// ---------------------------------------------------------------- the web and public registries
+// Only if the participant left the box ticked, and only their own name: never a household member's. Every failure just
+// leaves the rows out, since none of this is needed for the report
+const REGISTRY_API = "https://data.gov.il/api/3/action/datastore_search";
+const REGISTRIES = [
+  { title: "רואה/ת חשבון", id: "7e86def9-0899-45f4-8942-d6fe38482b1a", name: (r) => `${r["שם פרטי"]} ${r["שם משפחה"]}`, detail: (r) => `רישיון ${r["מספר רישיון"]}, ${r["סטטוס"]}`, city: (r) => r["ישוב"] },
+  { title: "רופא/ה", id: "9c64c522-bbc2-48fe-96fb-3b2a8626f59e", name: (r) => `${r["שם פרטי"]} ${r["שם משפחה"]}`, detail: (r) => `רישיון ${r["מספר רישיון רופא"]}`, city: () => "" },
+  { title: "מתווך/ת", id: "a0f56034-88db-4132-8803-854bcdb01ca1", name: (r) => r["שם המתווך"], detail: (r) => `רישיון ${r["מס רשיון"]}`, city: (r) => r["עיר מגורים"] },
+  { title: "שמאי/ת מקרקעין", id: "8540534a-eccd-4568-a677-652d589ed172", name: (r) => r["שם שמאי"], detail: (r) => `רישיון ${r["מספר רשיון"]}`, city: (r) => r["עיר"] },
+  { title: "עובד/ת סוציאלי/ת", id: "0f25d8f5-eecc-4d63-8914-38d59f19925b", name: (r) => `${r["שם-פרטי"]} ${r["שם-משפחה"]}`, detail: (r) => `רישום ${r["מספר רישום"]}`, city: (r) => r["ישוב מגורים"] },
+  { title: "קבלן/ית", id: "4eb61bd6-18cf-4e7c-9f9c-e166dfa0a2d8", name: (r) => r.SHEM_YESHUT || "", detail: (r) => `קבלן ${r.MISPAR_KABLAN}, ${r.TEUR_ANAF}`, city: (r) => r.SHEM_YISHUV || "" },
+];
+const COMPANY_REGISTRY = { title: "חברה", id: "f004176c-b85f-4542-8901-7b3176f9a054", name: (r) => r["שם חברה"], detail: (r) => `ח.פ. ${r["מספר חברה"]}, ${r["סטטוס חברה"]}`, city: (r) => r["שם עיר"] || "" };
+const nameWords = (s) => String(s || "").replace(/["'`~\-–־.,()]/g, " ").toLowerCase().split(/\s+/).filter(Boolean);
+const hasAllWords = (text, name) => { const w = new Set(nameWords(text)); const q = nameWords(name); return q.length >= 2 && q.every((x) => w.has(x)); };
+const sameCity = (a, b) => { const x = nameWords(a).join(""), y = nameWords(b).join(""); return !!x && !!y && (x.includes(y) || y.includes(x)); };
+
+async function registryRows(reg, name, city) {
+  const r = await fetch(`${REGISTRY_API}?resource_id=${reg.id}&limit=200&q=${encodeURIComponent(name)}`);
+  if (!r.ok) return [];
+  const rows = (await r.json()).result?.records || [];
+  const exact = rows.filter((x) => hasAllWords(reg.name(x), name));
+  // People share names, so a registry entry counts only when its city agrees, or when it's the only one with that name
+  const inCity = exact.filter((x) => sameCity(reg.city(x), city));
+  const sure = inCity.length ? inCity : exact.length === 1 ? exact : [];
+  return sure.slice(0, 3).map((x) => `${reg.title}: ${reg.detail(x)}${inCity.length ? "" : " (לפי השם בלבד)"}`);
+}
+
+const ACHIEVEMENT_RX = /אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner/i;
+const SKIP_MENTIONS = /(^|\.)(psakdin|nevo|takdin|lawdata|dinimveod)\.co\.il$|(^|\.)gov\.il$/; // a court page under a shared name would accuse the wrong person
+const NETWORK_LINKS = [
+  ["LinkedIn", /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([A-Za-z0-9%_-]+)\/?$/, (u) => `https://www.linkedin.com/in/${u}`],
+  ["Instagram", /^https:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)\/?$/, (u) => `https://www.instagram.com/${u}`],
+  ["Facebook", /^https:\/\/(?:[a-z-]+\.)?facebook\.com\/([A-Za-z0-9.]{5,})\/?$/, (u) => `https://www.facebook.com/${u}`],
+  ["GitHub", /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/?$/, (u) => `https://github.com/${u}`],
+];
+async function webHits(queries) {
+  if (!CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return [];
+  const r = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ kind: "imtrustme-search", queries }) });
+  const reply = await r.json();
+  return reply.ok ? reply.results || [] : [];
+}
+async function lookupOutside(city) {
+  const out = { licenses: [], companies: [], mentions: [], web_links: {} };
+  if (!$("#web-ok").checked) return out;
+  const nameHe = S.owner.name_he, nameEn = S.owner.name_en;
+  const settle = async (p) => { try { return await p; } catch (e) { console.warn("outside lookup failed", e); return []; } };
+  const [licenses, companies, hits] = await Promise.all([
+    Promise.all(REGISTRIES.map((reg) => settle(registryRows(reg, nameHe, city)))),
+    settle(registryRows(COMPANY_REGISTRY, nameHe, city)),
+    settle(webHits([nameHe, nameEn].filter(Boolean).map((n) => `"${n}"`))),
+  ]);
+  out.licenses = licenses.flat();
+  out.companies = companies;
+  const seen = new Set();
+  for (const h of hits) {
+    const link = String(h.link || "");
+    if (!/^https:\/\//.test(link) || seen.has(link)) continue;
+    seen.add(link);
+    if (!hasAllWords(`${h.title} ${h.snippet}`, nameHe) && !(nameEn && hasAllWords(`${h.title} ${h.snippet}`, nameEn))) continue;
+    const domain = new URL(link).hostname.replace(/^www\./, "");
+    const net = NETWORK_LINKS.map(([n, rx, make]) => { const m = rx.exec(link.split("?")[0]); return m && [n, make(m[1])]; }).find(Boolean);
+    if (net) { out.web_links[net[0]] ??= net[1]; continue; }
+    if (/linkedin|facebook|instagram|tiktok|twitter|x\.com/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
+    out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0] });
+  }
+  const standsOut = (m) => (ACHIEVEMENT_RX.test(m.text) ? 0 : 1);
+  out.mentions = out.mentions.sort((a, b) => standsOut(a) - standsOut(b)).slice(0, 5);
   return out;
 }
 
@@ -558,6 +638,7 @@ async function readMailbox() {
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
   const readOut = await readRelevant(search, pool, drop, senders).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
+  const outside = await lookupOutside(readOut.city?.name || "").catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
   stage("read", "done", fmtN(total - pending.size));
@@ -574,7 +655,7 @@ async function readMailbox() {
     return new Promise((res, rej) => {
       S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
       worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut } });
+        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut, outside } });
     }).then((r) => ({ r, counted }));
   };
   const first = await runEngine();
@@ -705,12 +786,31 @@ const evText = (p) => {
   return bits.join(" · ");
 };
 // A profile link. Rebuilt from a checked name in readRelevant, and escaped here as well
-const valHtml = (p) => (p.link && /^https:\/\//.test(p.link)
+const valHtml = (p) => (p.links ? p.links.filter((l) => /^https:\/\//.test(l.url)).map((l) => `<a class="row-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("") : p.link && /^https:\/\//.test(p.link)
   ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
 const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
+// The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
+function portraitText() {
+  const ids = {};
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
+  const parts = [], lists = {};
+  for (const x of S.result.portrait || []) {
+    if (isHidden(ids[x.label])) continue;
+    if (!x.join) { parts.push(x.text); continue; }
+    if (!lists[x.join]) { lists[x.join] = []; parts.push(lists[x.join]); lists[x.join].title = x.join; }
+    lists[x.join].push(x.text);
+  }
+  return parts.map((p) => (Array.isArray(p) ? `${p.title}: ${p.join(", ")}.` : p)).join(" ");
+}
+function showPortrait(card) {
+  const text = portraitText();
+  $(`${card}`).hidden = !text;
+  $(`${card} .portrait-text`).textContent = text;
+}
 function renderReport() {
+  showPortrait("#rep-portrait");
   const r = S.result;
   $("#rep-name").textContent = S.owner.name_he;
   $("#rep-read").textContent = S.run.body_reads ? `בנוסף נקראו ${fmtN(S.run.body_reads)} מיילים על מגורים, עבודה, טיסות ורשתות. מהם נשמרו רק עיר, מעסיק, יעדים וקישורים.` : "";
@@ -797,6 +897,7 @@ function reviewRow(id) {
 }
 
 function reviewCount() {
+  showPortrait("#rev-portrait");
   const all = $$("#rev-groups .rv-row").length, off = S.hidden.size;
   $("#rev-count").textContent = `${all - off} גלויות · ${off} מושחרות`;
 }
@@ -946,6 +1047,7 @@ function reportRecord() {
     suppliers: extra("s", r.suppliers, (x) => ({ org: x.org_he, text: supplierText(x) })),
     minor: extra("m", r.minor, (m) => ({ org: m.org_he, text: minorText(m) })),
     hidden_rows: S.hidden.size,
+    portrait: portraitText(),
   };
 }
 function statsRecord() {
