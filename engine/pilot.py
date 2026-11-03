@@ -27,7 +27,7 @@ PLATFORMS = [("LinkedIn", ("linkedin.com",)), ("Facebook", ("facebookmail.com", 
 PAYSLIP = re.compile(r"תלוש (שכר|משכורת)|תלוש לחודש|payslip", re.I)
 # kept out of the feedback file altogether, even before the participant reviews it: health, donations, religion,
 # community, children. The engine does not read these either (excluded sectors); this covers senders it doesn't know yet
-SENSITIVE = re.compile(r"תרומ|ישיב|קהיל|בית כנסת|בית הכנסת|צדק|חסד|תורה|רפוא|מרפא|קופת חולים|בדיק|תור ל|"
+SENSITIVE = re.compile(r"אמונה|נטפרי|netfree|תרומ|ישיב|קהיל|בית כנסת|בית הכנסת|צדק|חסד|תורה|רפוא|מרפא|קופת חולים|בדיק|תור ל|"
                        r"רופא|טיפול|פסיכו|גן ילדים|מעון|צהרון|בית ספר|תלמוד|ילד|kids|אמהות|לידה|הריון|מכבי|כללית|מאוחדת|לאומית|donat|health|clinic|church|synagog", re.I)
 PENSION = re.compile(r'דו"?ח ה?(רבעוני|תקופתי|שנתי).*(פנסיה|גמל|השתלמות)')
 
@@ -461,7 +461,7 @@ def run(payload_json: str) -> str:
     if has("מיילים על רכישת נכס"):
         say("מיילים על רכישת נכס", "מיילים על רכישת נכס.")
     if r := has("חשבונות שוטפים: חשמל, גז, מים, תקשורת"):
-        say("חשבונות שוטפים: חשמל, גז, מים, תקשורת", "חשבונות שוטפים: " + re.sub(r"\s*\([^)]*\)", "", str(r["v"])) + ".")
+        say("חשבונות שוטפים: חשמל, גז, מים, תקשורת", "חשבונות שוטפים: " + ", ".join(re.sub(r"\s*\([^)]*\)", "", str(r["v"])).split(", ")[:4]) + ".")
     if (r := has("מעסיק לפי מיילים")) and "שולח" not in (r.get("note") or ""):  # the sender of the slips may be a payroll firm
         say("מעסיק לפי מיילים", f"עבודה ב{r['v']}.")
     if r := has("ותק לפי מיילים מהמעסיק"):
