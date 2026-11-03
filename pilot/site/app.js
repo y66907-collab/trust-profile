@@ -1,5 +1,5 @@
-// imtrustme pilot: Gmail envelopes -> engine in the browser -> report the owner reviews -> feedback file the owner sends.
-// No server. The only network calls: Google sign-in, the Gmail API (read envelopes, then revoke), the CDN for the engine.
+// imtrustme pilot: Gmail envelopes -> engine in the browser -> participant checks each row -> participant presses send.
+// Network calls: Google sign-in, the Gmail API (read envelopes, then revoke), the CDN for the engine, and the send button.
 "use strict";
 
 const CFG = window.IMTRUSTME;
@@ -9,7 +9,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-const S = { owner: null, token: null, result: null, marks: {}, run: {} };
+const S = { owner: null, token: null, result: null, run: {}, mode: null, verdicts: {}, checkList: [], checkAt: 0 };
 
 // ---------------------------------------------------------------- navigation
 function go(id) {
@@ -26,6 +26,7 @@ document.addEventListener("click", (e) => {
 });
 $$(".to-name").forEach((el) => (el.textContent = CFG.feedbackTo));
 $("#yrs").textContent = CFG.years;
+$("#app-name").textContent = CFG.appName;
 
 // ---------------------------------------------------------------- engine (starts downloading now)
 const worker = new Worker("worker.js");
@@ -236,87 +237,146 @@ function renderReport() {
   const r = S.result;
   $("#rep-name").textContent = S.owner.name_he;
   const d = r.today.split("-").reverse().join(".");
-  $("#rep-meta").innerHTML = `נוצר ${d}<br>${fmtN(r.stats.messages)} מיילים, ${CFG.years} שנים`;
-  $("#rep-groups").innerHTML = r.groups.map((g, gi) => `
-    <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p, pi) => {
-      const id = `${gi}.${pi}`;
-      return `<div class="row" data-id="${id}">
+  $("#rep-meta").innerHTML = `${d}<br>${fmtN(r.stats.messages)} מיילים, ${CFG.years} שנים`;
+  $("#rep-groups").innerHTML = r.groups.map((g) => `
+    <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>
         <div class="val ${p.v === null ? "none" : ""}">${esc(valText(p))}</div>
-        <div class="hid">הוסתר על ידי בעל/ת הפרופיל</div>
         <div class="ev">${evLine(p)}</div>
-        <div class="cmt-print"></div>
-        <div class="ctl">
-          <button class="chip" data-act="hide" aria-pressed="false">להסתיר</button>
-          <button class="chip" data-act="comment" aria-pressed="false">תגובה</button>
-          <button class="chip wrong" data-act="wrong" aria-pressed="false">לא נכון</button>
-        </div>
-        <textarea class="cmt" data-f="comment" hidden placeholder="התגובה תופיע למשכיר מתחת לשורה"></textarea>
-        <div class="wrongbox" hidden><textarea data-f="wrongNote" placeholder="מה לא נכון? (נשלח רק ל${esc(CFG.feedbackTo)}, לא למשכיר)"></textarea></div>
-      </div>`;
-    }).join("")}</div>`).join("");
+      </div>`).join("")}</div>`).join("");
   $("#rep-minor").hidden = !r.minor.length;
   $("#minor-list").innerHTML = r.minor.map((m) =>
     `<li>${esc(m.org_he)}: ${m.n_in === 1 ? "הודעה אחת" : m.n_in + " הודעות"}, ${esc(m.first.split("-").reverse().join("."))}. נסגר.</li>`).join("");
-  $("#notchecked").innerHTML = r.not_checked.map((x) => `<li><b>${esc(x.label)}:</b> ${esc(x.why)}</li>`).join("");
-  $("#rep-foot").textContent = `גרסת חוקים ${r.rule_version}. המנוע דטרמיניסטי: אותה תיבה, אותו דוח.`;
 }
 
-$("#rep-groups").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-act]");
+// ---------------------------------------------------------------- what to share, then row by row
+const param = (id) => { const [g, p] = id.split(".").map(Number); return S.result.groups[g].params[p]; };
+const VERDICT_HE = { correct: "נכון", wrong: "לא נכון", unsure: "לא יודע/ת" };
+const KIND_HE = { missed: "חסר משהו שקיים", invented: "כתוב משהו שלא קיים", inaccurate: "הפרטים לא מדויקים" };
+const isPrivate = () => S.mode === "private";
+// A sensitive row without the report gets a bare answer: "missing" on a legal row would say there is a legal case
+const asksKind = (p) => !isPrivate() || p.detail;
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
   if (!b) return;
-  const row = b.closest(".row"), id = row.dataset.id;
-  const mk = (S.marks[id] ||= {});
-  const on = b.getAttribute("aria-pressed") !== "true";
-  b.setAttribute("aria-pressed", on);
-  if (b.dataset.act === "hide") { mk.hidden = on; row.classList.toggle("hidden", on); b.textContent = on ? "להציג" : "להסתיר"; }
-  if (b.dataset.act === "comment") { const t = $(".cmt", row); t.hidden = !on; if (on) t.focus(); else { t.value = ""; mk.comment = ""; $(".cmt-print", row).textContent = ""; } }
-  if (b.dataset.act === "wrong") { mk.wrong = on; const w = $(".wrongbox", row); w.hidden = !on; if (on) $("textarea", w).focus(); }
+  S.mode = b.dataset.mode;
+  S.checkList = [];
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => {
+    if (!isPrivate() || p.private) S.checkList.push(`${gi}.${pi}`);
+  }));
+  const open = S.checkList.findIndex((id) => !S.verdicts[id]);
+  S.checkAt = open < 0 ? 0 : open;
+  renderCheck();
+  go("s-check");
 });
-$("#rep-groups").addEventListener("input", (e) => {
-  const t = e.target.closest("textarea[data-f]");
-  if (!t) return;
-  const row = t.closest(".row");
-  (S.marks[row.dataset.id] ||= {})[t.dataset.f] = t.value.trim();
-  if (t.dataset.f === "comment") $(".cmt-print", row).textContent = t.value.trim() ? "תגובת בעל/ת הפרופיל: " + t.value.trim() : "";
+
+function renderCheck() {
+  const id = S.checkList[S.checkAt], p = param(id), v = S.verdicts[id];
+  const [g] = id.split(".").map(Number);
+  $("#chk-count").textContent = `שורה ${S.checkAt + 1} מתוך ${S.checkList.length}`;
+  $("#chk-bar").style.width = Math.round((100 * S.checkAt) / S.checkList.length) + "%";
+  $("#chk-prev").hidden = S.checkAt === 0;
+  $("#chk-card").innerHTML = `<div class="small">${esc(S.result.groups[g].title)}</div>
+    <div class="chk-lab">${esc(p.label)}</div>
+    <div class="chk-val ${p.v === null ? "none" : ""}">${esc(valText(p))}</div>
+    <div class="row-ev">${evLine(p)}</div>
+    ${isPrivate() ? `<div class="chk-private">מה שכתוב כאן נשאר אצלך. נשלחת רק התשובה.</div>` : ""}`;
+  $$("[data-verdict]").forEach((b) => b.classList.toggle("on", v?.verdict === b.dataset.verdict));
+  $$("[data-kind]").forEach((b) => b.classList.toggle("on", v?.kind === b.dataset.kind));
+  const showMore = v?.verdict === "wrong" && asksKind(p);
+  $("#chk-more").hidden = !showMore;
+  $("#chk-note-wrap").hidden = isPrivate();
+  $("#chk-note").placeholder = `הערה ל${CFG.feedbackTo} (לא חובה)`;
+  $("#chk-note").value = v?.note || "";
+}
+
+function nextRow() {
+  if (S.checkAt >= S.checkList.length - 1) { go("s-questions"); return; }
+  S.checkAt++;
+  renderCheck();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+$("#s-check").addEventListener("click", (e) => {
+  const id = S.checkList[S.checkAt], p = id && param(id);
+  const vb = e.target.closest("[data-verdict]"), kb = e.target.closest("[data-kind]");
+  if (vb) {
+    const verdict = vb.dataset.verdict;
+    S.verdicts[id] = verdict === "wrong" ? { ...S.verdicts[id], verdict } : { verdict };
+    if (verdict === "wrong" && asksKind(p)) renderCheck(); else nextRow();
+  } else if (kb) {
+    S.verdicts[id].kind = kb.dataset.kind;
+    if (isPrivate()) nextRow(); else renderCheck();
+  }
 });
-$("#print").addEventListener("click", () => window.print());
+$("#chk-note").addEventListener("input", (e) => {
+  const v = S.verdicts[S.checkList[S.checkAt]];
+  if (v) v.note = e.target.value.trim();
+});
+$("#chk-next").addEventListener("click", nextRow);
+$("#chk-skip").addEventListener("click", () => { delete S.verdicts[S.checkList[S.checkAt]]; nextRow(); });
+$("#chk-prev").addEventListener("click", () => { S.checkAt--; renderCheck(); });
 
 // ---------------------------------------------------------------- feedback
-const param = (id) => { const [g, p] = id.split(".").map(Number); return S.result.groups[g].params[p]; };
 const radio = (n) => $(`input[name="${n}"]:checked`)?.value || "";
+const answered = () => S.checkList.filter((id) => S.verdicts[id]);
 
 function fbItem(group, key, k, v, on = true, mono = false) {
   return `<label class="fb-item"><input type="checkbox" data-g="${group}" data-k="${esc(key)}" ${on ? "checked" : ""}>
     <div><div class="k">${esc(k)}</div><div class="v ${mono ? "mono" : ""}">${esc(v)}</div></div></label>`;
 }
 
-$("#to-feedback").addEventListener("click", () => {
-  const A = [["q-feel", "מה הרגשת", $("#q-feel").value.trim()], ["q-shown", "הראית למישהו", radio("q-shown")],
-    ["q-send", "היית שולח/ת למשכיר", radio("q-send")], ["q-send-why", "מה היית מסתיר/ה", $("#q-send-why").value.trim()],
-    ["q-fear", "מה הלחיץ בחיבור", $("#q-fear").value.trim()], ["q-pay", "היית משלם/ת", radio("q-pay")],
-    ["q-ux", "מה היה לא נוח", $("#q-ux").value.trim()]].filter((a) => a[2]);
-  S.answers = Object.fromEntries(A.map((a) => [a[0], a[2]]));
-  $("#fb-answers").innerHTML = A.length ? A.map((a) => fbItem("answers", a[0], a[1], a[2])).join("") : `<p class="small">לא נענו שאלות.</p>`;
-
-  const marks = Object.entries(S.marks).filter(([, m]) => m.hidden || m.comment || m.wrong);
-  $("#fb-marks").innerHTML = marks.length ? marks.map(([id, m]) => {
-    const p = param(id), bits = [];
-    if (m.hidden) bits.push("הסתרת");
-    if (m.comment) bits.push("תגובה: " + m.comment);
-    if (m.wrong) bits.push(`לא נכון: "${valText(p)}"` + (m.wrongNote ? ` · ${m.wrongNote}` : ""));
-    return fbItem("marks", id, p.label, bits.join(" · "));
-  }).join("") : `<p class="small">לא סימנת שורות.</p>`;
-
+// Everything sent is built from these allow-lists. Without the report no value, evidence, note or free name goes in
+function verdictRecord(id) {
+  const p = param(id), v = S.verdicts[id];
+  const rec = { key: p.key, label: p.fb_label, verdict: v.verdict };
+  if (!isPrivate() || p.detail) rec.outcome = p.outcome;
+  if (v.verdict === "wrong" && v.kind && asksKind(p)) rec.kind = v.kind;
+  if (!isPrivate() && v.verdict === "wrong") {
+    rec.value = valText(p);
+    if (v.note) rec.note = v.note;
+  }
+  return rec;
+}
+function statsRecord() {
   const st = S.result.stats;
+  const out = { messages: st.messages, business_in: st.business_in, business_in_registered: st.business_in_registered,
+                business_in_labelled: st.business_in_labelled, templates: st.templates, orgs: st.orgs };
+  if (!isPrivate()) { out.findings_rows = st.findings_rows; out.report_rows = S.result.groups.reduce((a, g) => a + g.params.length, 0); }
+  return out;
+}
+
+$("#to-feedback").addEventListener("click", () => {
+  const A = [["q-overall", "כמה נכון בסך הכול", radio("q-overall")], ["q-ux", "מה היה מבלבל", $("#q-ux").value.trim()]].filter((a) => a[2]);
+  S.answers = Object.fromEntries(A.map((a) => [a[0], a[2]]));
+  $("#fb-private-note").hidden = !isPrivate();
+  $("#fb-answers-card").hidden = !A.length;
+  $("#fb-answers").innerHTML = A.map((a) => fbItem("answers", a[0], a[1], a[2])).join("");
+
+  const ans = answered();
+  $("#fb-verdicts").innerHTML = ans.length ? ans.map((id) => {
+    const r = verdictRecord(id), bits = [VERDICT_HE[r.verdict]];
+    if (r.kind) bits.push(KIND_HE[r.kind]);
+    if (r.value !== undefined) bits.push(`המנוע כתב: ${r.value}`);
+    if (r.note) bits.push(r.note);
+    return fbItem("verdicts", id, r.label, bits.join(" · "));
+  }).join("") : `<p class="small">לא נענו שורות.</p>`;
+
+  const st = statsRecord();
   const pct = (a, b) => (b ? Math.round((100 * a) / b) + "%" : "—");
   $("#fb-stats").innerHTML = fbItem("stats", "all", "ספירות",
     `${fmtN(st.messages)} מיילים · ${fmtN(st.business_in)} מגופים · מזוהים ${pct(st.business_in_registered, st.business_in)} · ` +
-    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות · ${st.findings_rows} שורות עם ממצא`);
+    `עם סוג אירוע ${pct(st.business_in_labelled, st.business_in)} · ${fmtN(st.templates)} תבניות`);
 
-  $("#fb-unknown").innerHTML = S.result.unknown.length
-    ? S.result.unknown.map((u, i) => fbItem("unknown", i, `${u.domain} · ${u.count} מיילים`, u.skeleton)).join("")
-    : `<p class="small">המנוע הכיר את כל השולחים.</p>`;
+  // Without the report these start unticked: a sender's address can hint at what someone uses
+  const unknownOn = !isPrivate();
+  $("#fb-unknown-note").textContent = (isPrivate()
+    ? "לא מסומנים, כי כתובת שולח יכולה לרמוז במה את/ה משתמש/ת. אם לא מפריע לך, אפשר לסמן ולעזור ללמד את המנוע. "
+    : "כדי ללמד את המנוע. ") + "יש כאן רק כתובת שולח ותבנית נושא, בלי מספרים ובלי שמך. שולחים של בריאות, תרומות, קהילה וילדים כבר הוצאו.";
+  $("#fb-unknown-card").hidden = !S.result.unknown.length;
+  $("#fb-unknown").innerHTML = S.result.unknown.map((u, i) => fbItem("unknown", i, `${u.domain} · ${u.count} מיילים`, u.skeleton, unknownOn)).join("");
+  $$("#fb-unknown .fb-item").forEach((el) => el.classList.toggle("off", !unknownOn));
   go("s-feedback");
 });
 
@@ -328,40 +388,51 @@ const setAll = (on) => $$("#fb-unknown input").forEach((c) => { c.checked = on; 
 $("#fb-none").addEventListener("click", () => setAll(false));
 $("#fb-all").addEventListener("click", () => setAll(true));
 
-let lastFile = null;
-$("#fb-make").addEventListener("click", async () => {
+function buildFeedback() {
   const keep = (g) => new Set($$(`#s-feedback input[data-g="${g}"]:checked`).map((c) => c.dataset.k));
-  const ka = keep("answers"), km = keep("marks"), ku = keep("unknown"), ks = keep("stats");
-  const from = $("#fb-from").value.trim() || "ללא שם";
-  const out = {
-    kind: "imtrustme-pilot-feedback", version: 1, from, created: new Date().toISOString(),
-    rule_version: S.result.rule_version,
+  const ka = keep("answers"), kv = keep("verdicts"), ku = keep("unknown"), ks = keep("stats");
+  return {
+    kind: "imtrustme-pilot-feedback", version: 2, mode: S.mode, from: $("#fb-from").value.trim() || "ללא שם",
+    created: new Date().toISOString(), rule_version: S.result.rule_version,
     answers: Object.fromEntries(Object.entries(S.answers).filter(([k]) => ka.has(k))),
-    marks: Object.entries(S.marks).filter(([id]) => km.has(id)).map(([id, m]) => {
-      const p = param(id);
-      return { label: p.label, hidden: !!m.hidden, comment: m.comment || null, wrong: !!m.wrong,
-               value: m.wrong ? valText(p) : null, wrong_note: m.wrong ? m.wrongNote || null : null };
-    }),
-    stats: ks.has("all") ? { ...S.result.stats, listed_3y: S.run.listed, has_household: !!S.owner.household,
-                             report_rows: S.result.groups.reduce((a, g) => a + g.params.length, 0) } : null,
+    verdicts: answered().filter((id) => kv.has(id)).map(verdictRecord),
+    stats: ks.has("all") ? statsRecord() : null,
     unknown_senders: S.result.unknown.filter((_, i) => ku.has(String(i))),
   };
-  // ASCII only: Chrome drops a Hebrew download name and saves the file as "download". The sender's name is inside
-  const name = `imtrustme-feedback-${new Date().toISOString().slice(0, 16).replace(/\D/g, "")}.json`;
-  lastFile = new File([JSON.stringify(out, null, 1)], name, { type: "application/json" });
-  deliver(lastFile);
-  $("#done-file").textContent = name;
-  $("#again-share").hidden = !navigator.canShare?.({ files: [lastFile] });
-  go("s-done");
+}
+
+// The one network call that carries feedback, and only on this click. text/plain keeps the request simple (no CORS
+// preflight, which Apps Script cannot answer). The script replies {ok:true} only after the mail went out
+$("#fb-send").addEventListener("click", async () => {
+  const btn = $("#fb-send"), err = $("#fb-send-err");
+  err.hidden = true;
+  btn.disabled = true;
+  btn.textContent = "שולח…";
+  try {
+    if (CFG.sendUrl.startsWith("PASTE")) throw new Error("no send url");
+    const r = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(buildFeedback()) });
+    const reply = await r.json();
+    if (!reply.ok) throw new Error(reply.error || "rejected");
+    $("#done-lead").textContent = `הכול הגיע ל${CFG.feedbackTo}. עזרת מאוד.`;
+    go("s-done");
+  } catch (e) {
+    console.warn("send failed", e);
+    err.hidden = false;
+    $("#fb-download").hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "שליחה";
+  }
 });
 
-async function share(file) {
-  try { await navigator.share({ files: [file], title: "משוב imtrustme" }); } catch { /* closed or unsupported */ }
-}
-$("#again-share").addEventListener("click", () => lastFile && share(lastFile));
-
-function deliver(file) {
-  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(file), download: file.name });
+// Fallback only when sending failed: the participant still doesn't lose the answers
+$("#fb-download").addEventListener("click", () => {
+  // ASCII only: Chrome drops a Hebrew download name and saves the file as "download". The sender's name is inside
+  const name = `feedback-${new Date().toISOString().slice(0, 16).replace(/\D/g, "")}.json`;
+  const a = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(new File([JSON.stringify(buildFeedback(), null, 1)], name, { type: "application/json" })), download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-}
+  $("#done-lead").textContent = `הקובץ ${name} נשמר אצלך. אפשר לשלוח אותו ל${CFG.feedbackTo} בוואטסאפ או במייל.`;
+  go("s-done");
+});

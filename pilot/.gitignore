@@ -5,3 +5,4 @@ test/node_modules/
 **/__pycache__/
 *.xlsx
 imtrustme-feedback-*.json
+feedback-*.json

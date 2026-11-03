@@ -1,10 +1,12 @@
 """Merge the pilot feedback files into one Excel workbook.
 
-    python merge_feedback.py <folder with imtrustme-feedback-*.json> [out.xlsx]
+    python merge_feedback.py <folder with feedback-*.json> [out.xlsx]
 
 Sheets
-  participants  one row per file: coverage numbers, rows hidden / commented / flagged wrong, the answers
-  wrong         every row a participant flagged as wrong, with the value the engine gave and their note
+  accuracy      one row per report row, across everyone: correct / wrong / unsure, accuracy, kinds of mistake.
+                Sorted worst first, so the top rows are what to fix in the engine.
+  verdicts      every answer: who, which row, the answer, and (only if they chose to share) the value and note
+  participants  one row per file: mode, coverage numbers, answers
   unknown       unknown senders across all files: how many participants have each domain, total mails, skeletons.
                 Sorted so the top rows are the next entries for senders.json / labels.json.
 """
@@ -22,20 +24,22 @@ from openpyxl.utils import get_column_letter
 
 folder = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 out = Path(sys.argv[2] if len(sys.argv) > 2 else folder / "pilot_feedback.xlsx")
-files = sorted(folder.glob("imtrustme-feedback-*.json")) + sorted(folder.glob("download*"))
+files = sorted(folder.glob("feedback-*.json")) + sorted(folder.glob("download*"))
 fbs = []
 for f in files:
     try:
         d = json.loads(f.read_text(encoding="utf-8"))
     except (ValueError, UnicodeDecodeError):
         continue
-    if d.get("kind") == "imtrustme-pilot-feedback":
+    if d.get("kind") == "imtrustme-pilot-feedback" and d.get("version") == 2:
         fbs.append(d)
 if not fbs:
     sys.exit(f"no feedback files in {folder}")
 
-Q = [("q-feel", "מה הרגיש/ה"), ("q-shown", "הראה/תה למישהו"), ("q-send", "ישלח/תשלח למשכיר"),
-     ("q-send-why", "מה היה מסתיר/ה"), ("q-fear", "מה הלחיץ"), ("q-pay", "ישלם/תשלם"), ("q-ux", "מה לא נוח")]
+MODE = {"private": "בלי הדוח", "full": "עם הטעויות"}
+VERDICT = {"correct": "נכון", "wrong": "לא נכון", "unsure": "לא יודע/ת"}
+KIND = {"missed": "חסר", "invented": "לא קיים", "inaccurate": "לא מדויק"}
+OUTCOME = {"found": "נמצא", "none": "לא נמצא", "na": "לא נבדק"}
 
 
 def pct(a, b):
@@ -43,37 +47,58 @@ def pct(a, b):
 
 
 wb = Workbook()
-ws = wb.active
-ws.title = "participants"
+acc = wb.active
+acc.title = "accuracy"
+acc.sheet_view.rightToLeft = True
+acc.append(["שורה", "ענו", "נכון", "לא נכון", "לא יודע/ת", "דיוק %", "חסר", "לא קיים", "לא מדויק", "טעות בלי פירוט"])
+rows: dict[str, dict] = defaultdict(lambda: {"label": "", "correct": 0, "wrong": 0, "unsure": 0, "kinds": defaultdict(int)})
+for d in fbs:
+    for v in d["verdicts"]:
+        r = rows[v["key"]]
+        r["label"] = v["label"]
+        r[v["verdict"]] += 1
+        if v["verdict"] == "wrong":
+            r["kinds"][v.get("kind")] += 1
+
+
+def accuracy(r):
+    return pct(r["correct"], r["correct"] + r["wrong"])  # "unsure" says nothing about the engine
+
+
+for r in sorted(rows.values(), key=lambda r: (accuracy(r) if accuracy(r) is not None else 2, -r["wrong"])):
+    acc.append([r["label"], r["correct"] + r["wrong"] + r["unsure"], r["correct"], r["wrong"], r["unsure"], accuracy(r),
+                r["kinds"]["missed"], r["kinds"]["invented"], r["kinds"]["inaccurate"], r["kinds"][None]])
+for cell in acc["F"][1:]:
+    cell.number_format = "0%"
+
+v_sheet = wb.create_sheet("verdicts")
+v_sheet.sheet_view.rightToLeft = True
+v_sheet.append(["ממי", "שורה", "תשובה", "סוג הטעות", "מה המנוע מצא", "מה המנוע כתב", "הערה"])
+for d in fbs:
+    for v in d["verdicts"]:
+        v_sheet.append([d["from"], v["label"], VERDICT[v["verdict"]], KIND.get(v.get("kind"), ""),
+                        OUTCOME.get(v.get("outcome"), ""), v.get("value", ""), v.get("note", "")])
+
+ws = wb.create_sheet("participants")
 ws.sheet_view.rightToLeft = True
-ws.append(["ממי", "תאריך", "מיילים", "מגופים", "גופים מזוהים %", "עם סוג אירוע %", "תבניות", "שורות עם ממצא",
-           "שורות בדוח", "הוסתרו", "תגובות", "סומנו לא נכון", "שולחים לא מוכרים"] + [h for _, h in Q])
+ws.append(["ממי", "דרך השיתוף", "תאריך", "מיילים", "מגופים", "גופים מזוהים %", "עם סוג אירוע %", "תבניות",
+           "שורות שנענו", "שולחים לא מוכרים", "כמה נכון בסך הכול", "מה היה מבלבל"])
 for d in fbs:
     st = d.get("stats") or {}
-    marks = d.get("marks", [])
-    ws.append([d["from"], d["created"][:10], st.get("messages"), st.get("business_in"),
+    ws.append([d["from"], MODE[d["mode"]], d["created"][:10], st.get("messages"), st.get("business_in"),
                pct(st.get("business_in_registered", 0), st.get("business_in")),
-               pct(st.get("business_in_labelled", 0), st.get("business_in")), st.get("templates"), st.get("findings_rows"),
-               st.get("report_rows"), sum(m["hidden"] for m in marks), sum(bool(m["comment"]) for m in marks),
-               sum(m["wrong"] for m in marks), len(d.get("unknown_senders", []))]
-              + [d.get("answers", {}).get(k, "") for k, _ in Q])
-for c in ("E", "F"):
+               pct(st.get("business_in_labelled", 0), st.get("business_in")), st.get("templates"),
+               len(d["verdicts"]), len(d.get("unknown_senders", [])),
+               d.get("answers", {}).get("q-overall", ""), d.get("answers", {}).get("q-ux", "")])
+for c in ("F", "G"):
     for cell in ws[c][1:]:
         cell.number_format = "0%"
 
-w = wb.create_sheet("wrong")
-w.sheet_view.rightToLeft = True
-w.append(["ממי", "שורה", "מה המנוע כתב", "מה לא נכון"])
-for d in fbs:
-    for m in d.get("marks", []):
-        if m["wrong"]:
-            w.append([d["from"], m["label"], m["value"], m["wrong_note"]])
-
 agg: dict[str, dict] = defaultdict(lambda: {"who": set(), "mails": 0, "skeletons": defaultdict(int), "registered": False})
-for d in fbs:
+for i, d in enumerate(fbs):
     for u in d.get("unknown_senders", []):
         a = agg[u["domain"]]
-        a["who"].add(d["from"])
+        a["who"].add(i)  # by file: several people may leave the name empty
         a["mails"] += u["count"]
         a["skeletons"][u["skeleton"]] += u["count"]
         a["registered"] |= u["registered"]
