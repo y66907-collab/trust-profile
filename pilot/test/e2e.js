@@ -145,7 +145,7 @@ async function run(browser, mode) {
       return r.fulfill({ body: JSON.stringify({ ok: true, results: [
         { title: `${OWNER_HE} מרצה בכנס`, link: "https://news-example.co.il/a#top", snippet: "" },
         { title: `${OWNER_HE} פסק דין`, link: "https://www.psakdin.co.il/Document/1", snippet: "" },
-        { title: `${OWNER_HE} | GitHub`, link: "https://github.com/test-owner-gh", snippet: "" },
+        { title: `${OWNER_HE}‏ | GitHub`, link: "https://github.com/test-owner-gh", snippet: "" },
         { title: `${OWNER_HE} אלופת ישראל בקרוספיט`, link: "https://sport-example.co.il/c", snippet: "" },
         { title: "מישהו אחר לגמרי", link: "https://other-example.co.il/b", snippet: "" },
       ] }), contentType: "application/json", headers });
@@ -348,6 +348,8 @@ async function run(browser, mode) {
     assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
     assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
     assert.strictEqual(employerSearches.length, 1, "employer searches");
+    assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
+    assert.strictEqual(await page.evaluate(() => hasAllWords("Yudit Shamni‏ - ‏Data Engineer", "Yudit Shamni")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls[0]), "an excluded or personal sender went to AI");
     assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
     assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
