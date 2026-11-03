@@ -190,9 +190,15 @@ async function run(browser, mode) {
   await shot("2-report");
   assert(!FORBIDDEN.test(await page.evaluate(() => JSON.stringify(S.result.groups) + document.body.textContent)), "purpose word in the report");
 
-  await page.click('#s-report [data-go="s-choose"]');
-  await shot("3-choose");
-  await page.click(`[data-mode="${mode}"]`);
+  // sharing the report is the default; the other way is a small link below it
+  assert.strictEqual(await page.locator("#s-choose").count(), 0, "the choice screen is back");
+  await page.click('#s-report [data-mode="full"]');
+  await page.waitForSelector("#s-review.on");
+  if (mode === "private") {
+    await shot("3-other-way");
+    await page.click('#s-review [data-mode="private"]');
+    await page.waitForSelector("#s-check.on");
+  }
 
   const total = await page.evaluate(() => S.result.groups.reduce((a, g) => a + g.params.length, 0));
   if (mode === "private") {
@@ -219,17 +225,15 @@ async function run(browser, mode) {
     const ids = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g, gi) => g.params.map((p, pi) => [p.key, `${gi}.${pi}`]))));
     const row = (k) => `.rv-row[data-id="${ids[k]}"]`;
     const shown = (k) => page.isChecked(`${row(k)} [data-show]`);
-    assert(!(await shown("legal")), "a legal finding must start blacked out");
-    assert(!(await shown("interest_travel")), "an interest must start blacked out");
-    assert(await shown("city"), "an ordinary row must start visible");
-    assert(await shown("reply_time"), "a harmless finding must start visible");
-    assert(!(await shown("job_search")), "a personal finding must start blacked out");
+    for (const k of Object.keys(ids)) assert(await shown(k), "every row must start visible: " + k);
+    assert.strictEqual(await page.evaluate(() => S.hidden.size), 0, "something starts hidden");
     await shot("4-review");
     const secret = await page.evaluate((id) => valText(param(id)), ids.longest_supplier);
     assert((await page.textContent("#rev-groups")).includes(secret), "row value should be on the screen");
     await page.uncheck(`${row("longest_supplier")} [data-show]`);
     assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
-    await page.check(`${row("legal")} [data-show]`);
+    // rows that say something by name alone leave no trace when blacked out
+    for (const k of ["interest_travel", "platform_facebook", "household_accounts"]) await page.uncheck(`${row(k)} [data-show]`);
     await page.click(`${row("legal")} [data-rv="wrong"]`);
     await page.click(`${row("legal")} [data-rk="invented"]`);
     await page.click(`${row("city")} [data-rv="wrong"]`);
@@ -309,8 +313,9 @@ async function run(browser, mode) {
     assert(hv.hidden && hv.note === "הערה על שורה מושחרת" && !("value" in hv), "the answer on a blacked-out row");
     assert.strictEqual(fb.verdicts.find((v) => v.key === "mailbox_age").verdict, "comment", "a comment without an answer");
     assert.strictEqual(repRows.find((r) => r.key === "city").value, String(params.find((p) => p.key === "city").v ?? params.find((p) => p.key === "city").why), "a visible row must carry its value");
-    assert(repRows.find((r) => r.key === "legal")?.value, "a row opened by the participant must carry its value");
-    // rows that say something by name alone are gone entirely unless opened
+    assert(repRows.find((r) => r.key === "legal")?.value, "a visible sensitive row must carry its value");
+    assert(repRows.find((r) => r.key === "job_search"), "a visible finding must be in the report");
+    // rows that say something by name alone are gone entirely once blacked out
     assert(!repRows.some((r) => /^(platform|interest)_|household/.test(r.key)), "a conditional row was sent while blacked out");
     assert(!fb.verdicts.some((v) => /^(platform|interest)_|household/.test(v.key)), "a conditional answer was sent while blacked out");
     assert(!text.includes(HH_NAME), "household name in the file");

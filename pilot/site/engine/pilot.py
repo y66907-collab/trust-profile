@@ -54,12 +54,11 @@ NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
 
 
 INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
-# Findings for the person's own interest. Not asked row by row when the report isn't shared: nobody can confirm a median.
-# OPEN rows say nothing personal and start visible; CLOSED ones start blacked out
-BONUS_OPEN = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
+# Findings for the person's own interest. Not asked row by row when the report isn't shared: nobody can confirm a median
+BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
-              "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week"}
-BONUS_CLOSED = {"מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "מיילים על הזמנות ומשלוחים": "orders",
+              "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
+         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "מיילים על הזמנות ומשלוחים": "orders",
                 "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
                 "מיילים אישיים עם תודה בנושא": "thanks", "מנויים וחיובים חוזרים": "subscriptions",
                 "התראות אבטחה בתיבה": "security", "מסמכי הכנסה שיושבים בתיבה": "documents"}
@@ -72,9 +71,8 @@ def row_meta(label: str, r: dict) -> dict:
     if label.startswith("חשבונות על שם "):
         return {"key": "household_accounts", "fb_label": "חשבונות על שם בן/בת הבית", "detail": False,
                 "private": False, "outcome": outcome}
-    if label in BONUS_OPEN or label in BONUS_CLOSED:
-        return {"key": BONUS_OPEN.get(label) or BONUS_CLOSED[label], "fb_label": label, "detail": False, "private": False,
-                "open": label in BONUS_OPEN, "outcome": outcome}
+    if label in BONUS:
+        return {"key": BONUS[label], "fb_label": label, "detail": False, "private": False, "outcome": outcome}
     if label in INTEREST_KEYS:  # having one is itself personal, so it is only asked when the report is shared
         return {"key": "interest_" + INTEREST_KEYS[label], "fb_label": label, "detail": False, "private": False, "outcome": outcome}
     if label in {name for name, _ in PLATFORMS}:
