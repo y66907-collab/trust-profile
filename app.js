@@ -95,7 +95,8 @@ async function gget(url, tries = 0) {
     return gget(url, tries + 1);
   }
   if (r.status === 401) throw new Error("ההרשאה של Google פגה");
-  throw new Error("Gmail " + r.status);
+  const reason = await r.json().then((b) => b.error?.errors?.[0]?.reason || b.error?.status).catch(() => "");
+  throw new Error("Gmail " + r.status + (reason ? " " + reason : ""));
 }
 
 const idTime = (id) => Number(BigInt("0x" + id) >> 20n); // a Gmail id carries its epoch ms in the top bits
@@ -198,7 +199,7 @@ async function readMailbox() {
       }
     }
   }
-  await Promise.all(Array.from({ length: 10 }, lane));
+  await Promise.all(Array.from({ length: 4 }, lane));
   stage("read", "done", fmtN(rows.length));
 
   // 3. access is no longer needed: revoke before the engine even starts
