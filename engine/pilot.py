@@ -54,6 +54,15 @@ NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
 
 
 INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
+# Findings for the person's own interest. Not asked row by row when the report isn't shared: nobody can confirm a median.
+# OPEN rows say nothing personal and start visible; CLOSED ones start blacked out
+BONUS_OPEN = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
+              "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
+              "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week"}
+BONUS_CLOSED = {"מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "מיילים על הזמנות ומשלוחים": "orders",
+                "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
+                "מיילים אישיים עם תודה בנושא": "thanks", "מנויים וחיובים חוזרים": "subscriptions",
+                "התראות אבטחה בתיבה": "security", "מסמכי הכנסה שיושבים בתיבה": "documents"}
 
 
 def row_meta(label: str, r: dict) -> dict:
@@ -63,6 +72,9 @@ def row_meta(label: str, r: dict) -> dict:
     if label.startswith("חשבונות על שם "):
         return {"key": "household_accounts", "fb_label": "חשבונות על שם בן/בת הבית", "detail": False,
                 "private": False, "outcome": outcome}
+    if label in BONUS_OPEN or label in BONUS_CLOSED:
+        return {"key": BONUS_OPEN.get(label) or BONUS_CLOSED[label], "fb_label": label, "detail": False, "private": False,
+                "open": label in BONUS_OPEN, "outcome": outcome}
     if label in INTEREST_KEYS:  # having one is itself personal, so it is only asked when the report is shared
         return {"key": "interest_" + INTEREST_KEYS[label], "fb_label": label, "detail": False, "private": False, "outcome": outcome}
     if label in {name for name, _ in PLATFORMS}:
@@ -305,6 +317,66 @@ def run(payload_json: str) -> str:
                P(", ".join(e.org_he for e in hh_rels) or 0, ep_msgs(hh_rels), note="חשבון משותף לפי הצהרתך"))]
              if hh else []) + plat_rows),
     ] + ([("תחומי עניין", interest_rows)] if interest_rows else [])
+
+    # ---- findings about the person themselves. Times and counts only, and never a sender of an excluded kind
+    ins = p.get("insights") or {}
+
+    def fact(v, n=None, span="", note=None):
+        return {"v": v, "n": n, "span": span, "why": None, "note": note}
+
+    def wait_he(minutes: int) -> str:
+        if minutes < 60:
+            return f"כ-{minutes} דקות"
+        return f"כ-{round(minutes / 60)} שעות" if minutes < 48 * 60 else f"כ-{round(minutes / 1440)} ימים"
+
+    if ins:
+        life = ins.get("life", {})
+
+        def life_row(key):
+            x = life.get(key) or {"n": 0, "years": []}
+            return fact(x["n"], x["n"], span=", ".join(str(y) for y in x["years"]))
+
+        recurring: dict[str, set[str]] = {}
+        for i in p.get("receipt_ids", []):
+            m = by_id.get(i)
+            if m and m.direction == "in" and m.sender_class in ("registered", "unregistered"):
+                recurring.setdefault(m.org_he or m.domain, set()).add(m.sent_at[:7])
+        subs = sorted(((k, len(v)) for k, v in recurring.items() if len(v) >= 3), key=lambda x: -x[1])
+        companies = {m.domain for m in readable if m.direction == "in" and m.domain}
+        share = round(100 * ins["promotions"] / ins["in_period"]) if ins.get("in_period") else 0
+        top = [
+            ("התיבה במספרים", [
+                ("מיילים בכל התיבה", fact(f"{ins['mailbox_total']:,}")),
+                ("מיילים לפי שנה", fact(" · ".join(f"{y}: {n:,}" for y, n in sorted(ins["per_year"].items())))),
+                ("חברות וגופים שכתבו לך", fact(len(companies), note="בלי אנשים פרטיים")),
+                ("חלק הפרסומות בתיבה", fact(f"{share}%", note=f"{ins['promotions']:,} פרסומות")),
+                ("מיילים שלא נקראו", fact(f"{ins['unread']:,}" if ins["unread"] else 0)),
+            ]),
+            ("ההרגלים שלך", [
+                ("זמן התגובה החציוני שלך",
+                 fact(wait_he(ins["reply_minutes"]), note=f"לפי {ins['reply_n']:,} תשובות. רק הזמנים, בלי תוכן")
+                 if ins.get("reply_minutes") is not None else NA("אין מספיק תשובות כדי לחשב")),
+                ("השעות שבהן את/ה שולח/ת הכי הרבה",
+                 fact(f"\u2066{ins['active_from']:02d}:00–{(ins['active_from'] + 4) % 24:02d}:00\u2069",
+                      note=f"{ins['active_share']}% מהמיילים שיצאו") if ins.get("active_from") is not None
+                 else NA("אין מספיק מיילים יוצאים כדי לחשב")),
+                ("מיילים ששלחת בשבוע", fact((round(ins["sent"] / ins["weeks"], 1) if ins["sent"] / ins["weeks"] >= 1 else "פחות מ-1") if ins.get("sent") else 0)),
+            ]),
+        ]
+        rest = [
+            ("מה עולה מהנושאים", [
+                ("מיילים על חיפוש עבודה", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
+                ("מיילים על הזמנות ומשלוחים", life_row("orders")), ("קורסים, כנסים והרצאות", life_row("learning")),
+                ("מיילים על חוזים והסכמים", life_row("contracts")), ("ערעורים ותלונות ששלחת", life_row("disputes")),
+                ("מיילים אישיים עם תודה בנושא", life_row("thanks")),
+                ("מנויים וחיובים חוזרים", fact(", ".join(k for k, _ in subs[:8]) if subs else 0, len(subs),
+                                              note="חשבוניות או קבלות ב-3 חודשים לפחות")),
+            ]),
+            ("מה התיבה חושפת", [
+                ("התראות אבטחה בתיבה", life_row("security")), ("מסמכי הכנסה שיושבים בתיבה", life_row("documents")),
+            ]),
+        ]
+        groups = top + groups + rest
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]

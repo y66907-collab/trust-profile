@@ -18,7 +18,23 @@ const INTERESTS = [
   { key: "travel", label: "נסיעות וטיסות", domains: ["booking.com", "airbnb.com", "ryanair.com", "elal.co.il", "skygini.com", "skyscanner.com", "issta.co.il", "wizzair.com", "easyjet.com", "expedia.com", "agoda.com"] },
   { key: "shopping", label: "קניות אונליין", domains: ["amazon.com", "aliexpress.com", "ebay.com", "ksp.co.il", "ivory.co.il", "shein.com", "next.co.il", "email.apple.com", "samsung.com"] },
   { key: "entertainment", label: "מוזיקה וסטרימינג", domains: ["netflix.com", "spotify.com", "disneyplus.com", "apple.com"] },
+  { key: "cards", label: "כרטיסי אשראי", domains: ["cal-online.co.il", "max.co.il", "isracard.co.il", "americanexpress.co.il"] },
+  { key: "insurance", label: "ביטוח", domains: ["menora.co.il", "harel-ins.co.il", "migdal.co.il", "clalbit.co.il", "fnx.co.il", "ayalon-ins.co.il", "wobi.co.il"] },
+  { key: "tools", label: "כלים דיגיטליים", domains: ["canva.com", "figma.com", "notion.so", "slack.com", "atlassian.com", "dropbox.com", "adobe.com", "mailsuite.com", "mailtrack.io", "linkedin.com"] },
 ];
+// Findings a person finds interesting about themselves. Each is a count of subjects: the search returns ids, nothing is opened
+const LIFE_QUERIES = {
+  job_search: "subject:(ראיון OR משרה OR מועמדות OR \"קורות חיים\" OR interview OR candidate OR application)",
+  flights: "subject:(טיסה OR \"boarding pass\" OR itinerary OR \"כרטיס טיסה\")",
+  orders: "subject:(\"ההזמנה שלך\" OR \"your order\" OR משלוח OR shipped OR \"order confirmation\")",
+  learning: "subject:(קורס OR כנס OR הרצאה OR webinar OR conference OR meetup OR course)",
+  contracts: "subject:(חוזה OR הסכם OR contract OR agreement)",
+  disputes: "in:sent subject:(ערעור OR השגה OR תלונה OR complaint)",
+  thanks: "from:gmail.com subject:תודה",
+  security: "subject:(\"התראת אבטחה\" OR \"security alert\" OR \"new sign-in\" OR \"כניסה חדשה\")",
+  documents: "subject:(תלוש OR \"טופס 106\" OR \"אישור הכנסה\" OR payslip)",
+};
+const RECEIPT_QUERY = "subject:(קבלה OR חשבונית OR receipt OR invoice OR subscription OR מנוי OR renewal)";
 // One search for each report row that reads a mail's wording. Whatever comes back is opened, and pilot.py decides on the real subject
 const SIGNAL_QUERIES = [
   'subject:"כתב תביעה"', 'subject:"תביעה קטנה"', 'subject:"בית משפט"', 'subject:"בית המשפט"', 'subject:"הוצאה לפועל"',
@@ -251,12 +267,15 @@ async function readMailbox() {
   const drafts = new Set(draft.map((m) => m.id));
   const pending = new Map(); // id -> thread: mail we can't yet say who sent
   let token = "", oldest = Infinity, skipped = 0;
+  const perYear = {};
   do {
     const page = await gget(`${API}/messages?maxResults=500${token ? "&pageToken=" + token : ""}`, LIST_UNITS);
     for (const m of page.messages || []) {
       const t = idTime(m.id);
       if (t < oldest) oldest = t;
       if (t < since || drafts.has(m.id)) continue;
+      const y = new Date(t).getFullYear();
+      perYear[y] = (perYear[y] || 0) + 1;
       if (drop.has(m.id)) skipped++;
       else pending.set(m.id, m.threadId);
     }
@@ -329,6 +348,40 @@ async function readMailbox() {
     if (found.length) interests.push({ key: t.key, label: t.label, domain: d, n: found.length,
       first: Math.min(...found.map((m) => idTime(m.id))), last: Math.max(...found.map((m) => idTime(m.id))) });
   });
+  // habits come from the timestamp inside each id, so none of this opens a mail. No weekday on purpose: a day without
+  // mail can point to religious observance (product rule 3)
+  const hourCount = new Array(24).fill(0);
+  sentIds.forEach((m) => hourCount[new Date(idTime(m.id)).getHours()]++);
+  let activeFrom = 0, activeBest = -1;
+  for (let h = 0; h < 24; h++) {
+    const c = [0, 1, 2, 3].reduce((a, k) => a + hourCount[(h + k) % 24], 0);
+    if (c > activeBest) { activeBest = c; activeFrom = h; }
+  }
+  const sentSet = new Set(sentIds.map((m) => m.id)), threads = new Map();
+  threadOf.forEach((th, id) => { if (!threads.has(th)) threads.set(th, []); threads.get(th).push(id); });
+  const waits = [];
+  threads.forEach((ids) => {
+    ids.sort((a, b) => idTime(a) - idTime(b));
+    for (let i = 1; i < ids.length; i++) {
+      const dt = idTime(ids[i]) - idTime(ids[i - 1]);
+      if (sentSet.has(ids[i]) && !sentSet.has(ids[i - 1]) && dt < 14 * 864e5) waits.push(dt);
+    }
+  });
+  waits.sort((a, b) => a - b);
+  const [unreadIds, updatesIds, socialIds, forumsIds] = await Promise.all(["UNREAD", "CATEGORY_UPDATES", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"].map((l) => list("labelIds=" + l)));
+  const life = {};
+  await pool(Object.keys(LIFE_QUERIES), 8, async (k) => {
+    const found = await search(LIFE_QUERIES[k]);
+    life[k] = { n: found.length, years: [...new Set(found.map((m) => new Date(idTime(m.id)).getFullYear()))].sort() };
+  });
+  const receiptIds = (await search(RECEIPT_QUERY)).map((m) => m.id);
+  const insights = {
+    mailbox_total: profile.messagesTotal, per_year: perYear, promotions: skipped, unread: unreadIds.length,
+    updates: updatesIds.length, social: socialIds.length, forums: forumsIds.length,
+    in_period: Object.values(perYear).reduce((a, b) => a + b, 0), sent: sentIds.length, weeks: Math.max(1, (Date.now() - Math.max(since, oldest)) / (7 * 864e5)),
+    active_from: sentIds.length >= 5 ? activeFrom : null, active_share: sentIds.length ? Math.round((100 * activeBest) / sentIds.length) : 0,
+    reply_minutes: waits.length >= 5 ? Math.round(waits[Math.floor(waits.length / 2)] / 60000) : null, reply_n: waits.length, life,
+  };
   // what kind of mail each is: the engine labels a mail by a phrase of its subject, so the phrase it was found by is enough.
   // Applied in the rules' order: first rule wins, as in the engine
   const hits = new Array(labels.length);
@@ -364,7 +417,7 @@ async function readMailbox() {
     return new Promise((res, rej) => {
       S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
       worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-        sent_checked: sentChecked, mailbox_since, interests } });
+        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds } });
     }).then((r) => ({ r, counted }));
   };
   const first = await runEngine();
@@ -415,7 +468,7 @@ function showBackground(done, total) {
   const el = $("#bg-status");
   el.hidden = false;
   el.textContent = total === undefined
-    ? `הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.${S.reportChanged ? " הדוח התעדכן לפי כל השולחים, כדאי לעבור עליו שוב." : ""}`
+    ? `הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.${S.reportChanged ? " הדוח התעדכן לפי כל השולחים, ותשובות על שורות שהשתנו נמחקו. כדאי לעבור עליהן שוב." : ""}`
     : `ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). הדוח יכול עוד להתעדכן, ושום דבר לא יישלח לפני שזה נגמר.`;
 }
 
@@ -441,6 +494,7 @@ function applyFinal(r) {
     const v = S.verdicts[id];
     if (v) {
       const kept = same(p.v, n.p.v) ? v : (v.note ? { note: v.note } : null);
+      if (kept !== v) S.reportChanged = true;
       if (kept) verdicts[n.id] = kept;
     }
     if (S.hidden?.has(id)) hidden.add(n.id);
@@ -449,7 +503,6 @@ function applyFinal(r) {
   const fresh = [...after].filter(([key]) => !before.has(key)).map(([, n]) => n.id);
   S.result = r;
   if (!changed) return;
-  S.reportChanged = true;
   S.verdicts = verdicts;
   renderReport();
   if (S.hidden) {
@@ -497,6 +550,7 @@ const evText = (p) => {
 };
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
+const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
 function renderReport() {
   const r = S.result;
   $("#rep-name").textContent = S.owner.name_he;
@@ -505,6 +559,11 @@ function renderReport() {
   const range = r.stats.date_range;
   $("#rep-meta").innerHTML = [["הופק", d], ["תקופה", range ? `<bdi dir="ltr">${esc(ymOf(range[0]))} – ${esc(ymOf(range[1]))}</bdi>` : "—"],
     ["מיילים בתקופה", fmtN(S.run.listed)]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+  // The part people came for: the numbers about themselves, before the detail
+  const byKey = Object.fromEntries(r.groups.flatMap((g) => g.params).map((p) => [p.key, p]));
+  const tiles = HERO.map((k) => byKey[k]).filter((p) => p && p.outcome === "found");
+  $("#rep-hero").hidden = !tiles.length;
+  $("#hero-tiles").innerHTML = tiles.map((p) => `<div class="tile"><b>${esc(valText(p))}</b><span>${esc(p.label)}</span></div>`).join("");
   $("#rep-groups").innerHTML = r.groups.map((g) => `
     <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>
@@ -559,7 +618,7 @@ function startsHidden(id) {
   if (id[0] === "m") return true;
   if (id[0] === "s") return !["על שמך", "לא צוין שם"].includes(S.result.suppliers[+id.slice(1)].holder);
   const p = param(id);
-  return !p.private || (SENSITIVE.has(p.key) && p.outcome === "found");
+  return (!p.private && !p.open) || (SENSITIVE.has(p.key) && p.outcome === "found");
 }
 function initHidden() {
   if (S.hidden) return; // coming back keeps what was chosen

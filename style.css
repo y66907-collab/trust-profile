@@ -163,6 +163,13 @@ textarea { min-height: 84px; resize: vertical; }
 .wrong-more { margin-top: 14px; }
 .wrong-more .f { font-weight: 600; }
 
+/* the numbers people came for */
+.hero { background: var(--tq-soft); border-color: var(--tq-line); }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tile { background: var(--card); border-radius: 12px; padding: 14px; display: grid; gap: 4px; align-content: start; }
+.tile b { font-size: 24px; line-height: 1.2; color: var(--tq-deep); overflow-wrap: anywhere; }
+.tile span { font-size: 14px; color: var(--muted); }
+
 /* the report with redactions */
 .rev-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
 .rv-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1.25fr); gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
@@ -188,6 +195,7 @@ textarea { min-height: 84px; resize: vertical; }
 .fb-rep b { overflow-wrap: anywhere; }
 
 @media (max-width: 560px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rv-row { grid-template-columns: 28px minmax(0, 1fr); }
   .rv-v { grid-row: 1 / span 3; }
   .rv-val, .rv-ev, .rv-act, .rv-kinds, .rv-note { grid-column: 2; }
