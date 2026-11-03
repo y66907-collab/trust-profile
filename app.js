@@ -87,16 +87,84 @@ function fail(e) {
 }
 
 // ---------------------------------------------------------------- Gmail
-async function gget(url, tries = 0) {
-  const r = await fetch(url, { headers: { Authorization: "Bearer " + S.token } });
-  if (r.ok) return r.json();
-  if ((r.status === 429 || r.status === 403 || r.status >= 500) && tries < 6) {
-    await new Promise((res) => setTimeout(res, 600 * 2 ** tries + Math.random() * 300));
-    return gget(url, tries + 1);
+// A rate limit never ends a run. All requests share one pace: when Gmail says slow down, everyone waits, and the
+// pace recovers step by step. Only a real refusal, or Gmail silent for GIVE_UP_MS, stops the run.
+const RATE_REASONS = ["rateLimitExceeded", "userRateLimitExceeded"];
+const GIVE_UP_MS = 20 * 6e4;
+const MIN_GAP_MS = 100, MAX_GAP_MS = 2000;
+const flow = { gap: MIN_GAP_MS, next: 0, hits: 0, lastOk: 0 };
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+function slowDown(retryAfter) {
+  if (Date.now() - flow.lastOk > GIVE_UP_MS) throw new Error("Gmail לא עונה כבר 20 דקות");
+  flow.hits++;
+  flow.gap = Math.min(MAX_GAP_MS, flow.gap * 1.5);
+  const pause = Math.max(Math.min(6e4, 1000 * 2 ** flow.hits), (+retryAfter || 0) * 1000) + Math.random() * 500;
+  flow.next = Math.max(flow.next, Date.now() + pause);
+}
+
+async function gget(url) {
+  if (!flow.lastOk) flow.lastOk = Date.now();
+  for (;;) {
+    const now = Date.now(), at = Math.max(now, flow.next);
+    flow.next = at + flow.gap;
+    if (at > now) await sleep(at - now);
+    let r;
+    try {
+      r = await fetch(url, { headers: { Authorization: "Bearer " + S.token } });
+    } catch { // offline for a moment, or the laptop slept
+      slowDown();
+      continue;
+    }
+    if (r.ok) {
+      flow.lastOk = Date.now();
+      flow.hits = 0;
+      flow.gap = Math.max(MIN_GAP_MS, flow.gap * 0.98);
+      return r.json();
+    }
+    if (r.status === 401) {
+      await renewAccess();
+      flow.lastOk = Date.now();
+      continue;
+    }
+    const reason = await r.clone().json().then((b) => b.error?.errors?.[0]?.reason || b.error?.status).catch(() => "");
+    if (r.status === 429 || r.status >= 500 || (r.status === 403 && RATE_REASONS.includes(reason))) {
+      slowDown(r.headers.get("Retry-After"));
+      continue;
+    }
+    throw new Error("Gmail " + r.status + (reason ? " " + reason : ""));
   }
-  if (r.status === 401) throw new Error("ההרשאה של Google פגה");
-  const reason = await r.json().then((b) => b.error?.errors?.[0]?.reason || b.error?.status).catch(() => "");
-  throw new Error("Gmail " + r.status + (reason ? " " + reason : ""));
+}
+
+// Google access lasts about an hour. A long read asks for one click to continue: a window opened without a click is blocked.
+let renewing = null;
+function renewAccess() {
+  renewing ||= new Promise((resolve, reject) => {
+    const el = $("#run-err");
+    el.textContent = "הגישה ל-Google פגה אחרי שעה. מה שנקרא עד עכשיו נשמר בדף. ";
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn";
+    b.textContent = "להמשיך מאותו מקום";
+    el.append(b);
+    el.hidden = false;
+    b.addEventListener("click", () => {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: CFG.googleClientId,
+        scope: SCOPE,
+        callback: (t) => {
+          if (t.error) return reject(new Error("לא התקבלה הרשאה להמשיך"));
+          S.token = t.access_token;
+          el.hidden = true;
+          el.textContent = "";
+          renewing = null;
+          resolve();
+        },
+      });
+      client.requestAccessToken({ prompt: "" });
+    });
+  });
+  return renewing;
 }
 
 const idTime = (id) => Number(BigInt("0x" + id) >> 20n); // a Gmail id carries its epoch ms in the top bits
