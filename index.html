@@ -99,10 +99,10 @@
       </div>
       <label class="card web-ok"><input type="checkbox" id="web-ok" checked>
         <div><b>לחפש את השם שלי גם בגוגל ובמאגרים ציבוריים</b>
-        <div class="small">השם, ורק השם, נשלח לשירות חיפוש ולמאגרי הממשלה. אפשר להוריד את הסימון.</div></div></label>
+        <div class="small">השם שלך ושם מקום העבודה נשלחים לשירות חיפוש ולמאגרי הממשלה. אפשר להוריד את הסימון.</div></div></label>
       <label class="card web-ok"><input type="checkbox" id="ai-ok" checked>
         <div><b>לתת ל-AI לכתוב עוד משפטים על מה שעולה מהמיילים</b>
-        <div class="small">נושאי מיילים מגופים ועסקים נשלחים ל-Claude של Anthropic, עם השולח והחודש. בלי השם שלך, בלי ספרות, בלי תוכן המיילים ובלי מיילים מאנשים פרטיים. אפשר להוריד את הסימון.</div></div></label>
+        <div class="small">נושאי מיילים מגופים ועסקים, ועובדות מהדוח כמו עיר ומקום עבודה, נשלחים ל-Claude של Anthropic. בלי השם שלך, בלי ספרות בנושאים, בלי תוכן המיילים ובלי מיילים מאנשים פרטיים. אפשר להוריד את הסימון.</div></div></label>
       <div class="actions">
         <button class="btn google" id="connect"><svg class="ico" style="margin:0"><use href="#i-env"/></svg>חיבור Gmail</button>
         <button class="btn ghost" data-go="s-details">חזרה</button>
@@ -140,9 +140,14 @@
     </div>
     <div class="rep-note">אין כאן ציון ואין המלצה. כל שורה היא עובדה, עם מספר המיילים שעליהם היא מבוססת ועם התקופה שלהם.</div>
     <div class="card portrait" id="rep-portrait" hidden>
-      <h2>בכמה מילים</h2>
-      <p class="portrait-text"></p>
-      <div class="portrait-ai" hidden><b>נכתב על ידי AI, מנושאי מיילים. ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
+      <h2>בקצרה</h2>
+      <div class="portrait-top"></div>
+      <div class="portrait-links"></div>
+      <details class="portrait-more" hidden>
+        <summary>כל הפרטים</summary>
+        <div class="portrait-text"></div>
+        <div class="portrait-ai" hidden><b>נכתב על ידי AI, ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
+      </details>
       <p class="small">כל משפט נבנה משורה בדוח שלמטה. בלי ציון, בלי המלצה ובלי דעה.</p>
     </div>
     <div class="card hero" id="rep-hero" hidden>
@@ -206,9 +211,14 @@
       <span><button class="link" id="rev-none">להשחיר הכול</button> <button class="link" id="rev-all">לסמן הכול</button></span>
     </div>
     <div class="card portrait" id="rev-portrait" hidden>
-      <h2>בכמה מילים</h2>
-      <p class="portrait-text"></p>
-      <div class="portrait-ai" hidden><b>נכתב על ידי AI, מנושאי מיילים. ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
+      <h2>בקצרה</h2>
+      <div class="portrait-top"></div>
+      <div class="portrait-links"></div>
+      <details class="portrait-more" hidden>
+        <summary>כל הפרטים</summary>
+        <div class="portrait-text"></div>
+        <div class="portrait-ai" hidden><b>נכתב על ידי AI, ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
+      </details>
       <p class="small">כך זה יישלח. כשמורידים V משורה, המשפט שלה יורד מכאן.</p>
     </div>
     <div id="rev-groups"></div>
