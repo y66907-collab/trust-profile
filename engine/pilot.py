@@ -58,7 +58,7 @@ INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
 BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
               "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
-         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "מיילים על הזמנות ומשלוחים": "orders",
+         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations", "מיילים על הזמנות ומשלוחים": "orders",
                 "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
                 "מיילים אישיים עם תודה בנושא": "thanks", "מנויים וחיובים חוזרים": "subscriptions",
                 "התראות אבטחה בתיבה": "security", "מסמכי הכנסה שיושבים בתיבה": "documents"}
@@ -238,8 +238,12 @@ def run(payload_json: str) -> str:
     plat_rows = []
     for name, doms in PLATFORMS:
         ms = [m for m in msgs if m.direction == "in" and any(m.domain == d or m.domain.endswith("." + d) for d in doms)]
-        if len(ms) >= 5:
-            plat_rows.append((name, P("חשבון קיים על הכתובת המחוברת", ms)))
+        link = (p.get("read_out") or {}).get("links", {}).get(name)
+        if len(ms) >= 5 or link:
+            row = P("חשבון קיים על הכתובת המחוברת", ms)
+            if link:
+                row["v"], row["link"] = link.split("//")[1].removeprefix("www."), link
+            plat_rows.append((name, row))
     own_bills = [m for m in billing if m.holder == "owner"]
     hh_rels = [e for e in rel if e.holder == "household"]
     addressed_msgs = [m for m in msgs if m.sender_class == "registered" and m.direction == "in" and m.holder]
@@ -327,6 +331,25 @@ def run(payload_json: str) -> str:
             return f"כ-{minutes} דקות"
         return f"כ-{round(minutes / 60)} שעות" if minutes < 48 * 60 else f"כ-{round(minutes / 1440)} ימים"
 
+    # ---- what the few read mails added, only where the envelope alone found nothing
+    ro = p.get("read_out") or {}
+
+    def upgrade(label, new, force=False):
+        for _, rows in groups:
+            for i, (name, r) in enumerate(rows):
+                if name == label and (force or r["v"] is None):
+                    rows[i] = (label, new)
+
+    if ro.get("city"):
+        c = ro["city"]
+        a, b = ym(c["first"]), ym(c["last"])
+        note = "מתוך חוזים וחשבונות שנקראו"
+        upgrade("עיר מגורים לפי חשבונות", fact(c["name"], c["mails"], a if a == b else f"{a}–{b}", note))
+        upgrade("גר/ה שם", fact(f"מ-{a} לפחות", c["mails"], a if a == b else f"{a}–{b}", note))
+    if ro.get("employer"):
+        upgrade("מעסיק לפי מיילים", fact(ro["employer"]["name"], ro["employer"]["mails"], note="מתוך תלושים שנקראו"),
+                force=True)  # the slip names the employer; the envelope only names whoever sends the slips
+
     if ins:
         life = ins.get("life", {})
 
@@ -364,6 +387,7 @@ def run(payload_json: str) -> str:
         rest = [
             ("מה עולה מהנושאים", [
                 ("מיילים על חיפוש עבודה", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
+                ("יעדי טיסה", fact(", ".join(ro.get("destinations") or []) or 0, len(ro.get("destinations") or []))),
                 ("מיילים על הזמנות ומשלוחים", life_row("orders")), ("קורסים, כנסים והרצאות", life_row("learning")),
                 ("מיילים על חוזים והסכמים", life_row("contracts")), ("ערעורים ותלונות ששלחת", life_row("disputes")),
                 ("מיילים אישיים עם תודה בנושא", life_row("thanks")),
