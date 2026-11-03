@@ -437,6 +437,16 @@ const evLine = (p) => {
   if (p.note) bits.push(esc(p.note));
   return bits.join(" · "); // every bit is already escaped or fixed text
 };
+// The same line as plain text, for the mail. The isolates keep a date range in order inside Hebrew
+const evText = (p) => {
+  if (p.v === null) return "";
+  const bits = [];
+  if (p.n === 0) bits.push("נבדקה כל התקופה, לא נמצא");
+  else if (p.n) bits.push(`לפי ${fmtN(p.n)} מיילים`);
+  if (p.span) bits.push(/^\d/.test(p.span) ? `\u2066${p.span}\u2069` : p.span);
+  if (p.note) bits.push(p.note);
+  return bits.join(" · ");
+};
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
 function renderReport() {
@@ -463,11 +473,13 @@ function renderReport() {
 
 // ---------------------------------------------------------------- what to share, then row by row
 const param = (id) => { const [g, p] = id.split(".").map(Number); return S.result.groups[g].params[p]; };
-const VERDICT_HE = { correct: "נכון", wrong: "לא נכון", unsure: "לא יודע/ת" };
+const VERDICT_HE = { correct: "נכון", wrong: "לא נכון", unsure: "לא יודע/ת", comment: "הערה" };
 const KIND_HE = { missed: "חסר משהו שקיים", invented: "כתוב משהו שלא קיים", inaccurate: "הפרטים לא מדויקים" };
 const isPrivate = () => S.mode === "private";
 // A sensitive row without the report gets a bare answer: "missing" on a legal row would say there is a legal case
 const asksKind = (p) => !isPrivate() || p.detail;
+const isHidden = (id) => !isPrivate() && !!S.hidden?.has(id);
+const bare = (id) => isPrivate() || isHidden(id);
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-mode]");
@@ -479,9 +491,113 @@ document.addEventListener("click", (e) => {
   }));
   const open = S.checkList.findIndex((id) => !S.verdicts[id]);
   S.checkAt = open < 0 ? 0 : open;
+  $("#q-back").dataset.go = isPrivate() ? "s-check" : "s-review";
+  if (!isPrivate()) { renderReview(); go("s-review"); return; }
   renderCheck();
   go("s-check");
 });
+
+// ---------------------------------------------------------------- the report with redactions and comments
+// Start blacked out: findings someone may not want a relative to read. A row with nothing found stays open
+const SENSITIVE = new Set(["legal", "collection_notices", "bank_alerts", "payment_issues_12m", "payment_issues_all",
+                           "minor_payment_events", "loans", "mortgage", "credit_report"]);
+// A row that exists only for some people says something by its name alone, so blacking it out removes it completely
+const dropsWhole = (id) => (/^[sm]/.test(id) ? true : !param(id).private);
+
+function supplierText(x) { return `\u2066${x.first} – ${x.last}\u2069 · ${x.months} חודשים · ${x.active ? "פעיל" : "הסתיים"} · ${x.holder}`; }
+function minorText(m) { return `${m.n_in === 1 ? "הודעה אחת" : m.n_in + " הודעות"}, ${m.first.split("-").reverse().join(".")}. נסגר.`; }
+
+function initHidden() {
+  if (S.hidden) return; // coming back keeps what was chosen
+  S.hidden = new Set();
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => {
+    if (!p.private || (SENSITIVE.has(p.key) && p.outcome === "found")) S.hidden.add(`${gi}.${pi}`);
+  }));
+  S.result.suppliers.forEach((x, i) => { if (!["על שמך", "לא צוין שם"].includes(x.holder)) S.hidden.add(`s${i}`); });
+  S.result.minor.forEach((_, i) => S.hidden.add(`m${i}`));
+}
+
+function reviewRow(id) {
+  const hidden = S.hidden.has(id), v = S.verdicts[id] || {};
+  const isParam = !/^[sm]/.test(id);
+  const p = isParam ? param(id) : null;
+  const item = id[0] === "s" ? S.result.suppliers[+id.slice(1)] : id[0] === "m" ? S.result.minor[+id.slice(1)] : null;
+  const label = isParam ? p.label : item.org_he;
+  const value = isParam ? valText(p) : id[0] === "s" ? supplierText(item) : minorText(item);
+  const whole = dropsWhole(id);
+  const chips = isParam && !(hidden && whole) ? ["correct", "wrong", "unsure"].map((k) =>
+    `<button class="chip ${k === "wrong" ? "no" : ""} ${v.verdict === k ? "on" : ""}" data-rv="${k}">${VERDICT_HE[k]}</button>`).join("") : "";
+  const kinds = isParam && v.verdict === "wrong" && (!hidden || p.detail) ? `<div class="rv-kinds">${Object.entries(KIND_HE).map(([k, t]) =>
+    `<button class="chip ${v.kind === k ? "on" : ""}" data-rk="${k}">${t}</button>`).join("")}</div>` : "";
+  const noteOpen = S.noteOpen.has(id) || v.note;
+  const canNote = !(hidden && whole);
+  return `<div class="rv-row ${hidden ? "is-hidden" : ""}" data-id="${id}">
+    <label class="rv-v" title="לשתף את השורה"><input type="checkbox" data-show ${hidden ? "" : "checked"} aria-label="לשתף: ${esc(label)}"></label>
+    <div class="rv-lab">${esc(label)}</div>
+    <div class="rv-val ${isParam && p.v === null ? "none" : ""}">${hidden ? `<span class="redact" role="img" aria-label="מושחר"></span>` : esc(value)}</div>
+    <div class="rv-ev">${hidden ? (whole ? "השורה הזו לא תישלח בכלל." : "יישלחו רק התשובה וההערה שלך, אם תוסיפו.") : isParam ? evLine(p) : ""}</div>
+    ${chips || canNote ? `<div class="rv-act">${chips}${canNote ? `<button class="link" data-note-open>תגובה</button>` : ""}</div>` : ""}
+    ${kinds}
+    ${canNote && noteOpen ? `<textarea class="rv-note" data-note placeholder="תגובה ל${esc(CFG.feedbackTo)}">${esc(v.note || "")}</textarea>` : ""}
+  </div>`;
+}
+
+function reviewCount() {
+  const all = $$("#rev-groups .rv-row").length, off = S.hidden.size;
+  $("#rev-count").textContent = `${all - off} גלויות · ${off} מושחרות`;
+}
+function renderReview() {
+  initHidden();
+  S.noteOpen ??= new Set();
+  const r = S.result;
+  const card = (title, ids) => `<div class="card group"><h2>${esc(title)}</h2>${ids.map(reviewRow).join("")}</div>`;
+  $("#rev-groups").innerHTML = r.groups.map((g, gi) => card(g.title, g.params.map((_, pi) => `${gi}.${pi}`))).join("") +
+    (r.suppliers.length ? card("פירוט ספקים", r.suppliers.map((_, i) => `s${i}`)) : "") +
+    (r.minor.length ? card("אירועי תשלום זניחים", r.minor.map((_, i) => `m${i}`)) : "");
+  reviewCount();
+}
+function refreshRow(id) {
+  $(`#rev-groups [data-id="${id}"]`).outerHTML = reviewRow(id);
+  reviewCount();
+}
+function setNote(id, text) {
+  const v = S.verdicts[id] || {};
+  if (text) v.note = text; else delete v.note;
+  if (v.verdict || v.note) S.verdicts[id] = v; else delete S.verdicts[id];
+}
+$("#s-review").addEventListener("change", (e) => {
+  if (!e.target.matches("[data-show]")) return;
+  const id = e.target.closest("[data-id]").dataset.id;
+  if (e.target.checked) S.hidden.delete(id); else S.hidden.add(id);
+  refreshRow(id);
+});
+$("#s-review").addEventListener("input", (e) => {
+  if (e.target.matches("[data-note]")) setNote(e.target.closest("[data-id]").dataset.id, e.target.value.trim());
+});
+$("#s-review").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-id]"), id = row?.dataset.id;
+  const rv = e.target.closest("[data-rv]"), rk = e.target.closest("[data-rk]");
+  if (rv) {
+    const old = S.verdicts[id] || {};
+    const verdict = old.verdict === rv.dataset.rv ? undefined : rv.dataset.rv; // a second click takes the answer back
+    S.verdicts[id] = { ...(old.note ? { note: old.note } : {}), ...(verdict ? { verdict } : {}), ...(verdict === "wrong" && old.kind ? { kind: old.kind } : {}) };
+    if (!verdict && !old.note) delete S.verdicts[id];
+    refreshRow(id);
+  } else if (rk) {
+    S.verdicts[id].kind = rk.dataset.rk;
+    refreshRow(id);
+  } else if (e.target.closest("[data-note-open]")) {
+    S.noteOpen.add(id);
+    refreshRow(id);
+    $(`#rev-groups [data-id="${id}"] [data-note]`)?.focus();
+  }
+});
+const reviewAll = (hide) => {
+  $$("#rev-groups .rv-row").forEach((el) => { if (hide) S.hidden.add(el.dataset.id); else S.hidden.delete(el.dataset.id); });
+  renderReview();
+};
+$("#rev-none").addEventListener("click", () => reviewAll(true));
+$("#rev-all").addEventListener("click", () => reviewAll(false));
 
 function renderCheck() {
   const id = S.checkList[S.checkAt], p = param(id), v = S.verdicts[id];
@@ -532,7 +648,16 @@ $("#chk-prev").addEventListener("click", () => { S.checkAt--; renderCheck(); });
 
 // ---------------------------------------------------------------- feedback
 const radio = (n) => $(`input[name="${n}"]:checked`)?.value || "";
-const answered = () => S.checkList.filter((id) => S.verdicts[id]);
+const answered = () => S.checkList.filter((id) => {
+  const v = S.verdicts[id];
+  if (!v) return false;
+  if (isPrivate()) return !!v.verdict;
+  return !(isHidden(id) && dropsWhole(id));
+});
+
+// An interest sender is known, not unknown, and listing it here would reveal an interest the participant blacked out
+const unknownList = () => S.result.unknown.filter((u) =>
+  !INTERESTS.some((t) => t.domains.some((d) => u.domain === d || u.domain.endsWith("." + d))));
 
 function fbItem(group, key, k, v, on = true, mono = false) {
   return `<label class="fb-item"><input type="checkbox" data-g="${group}" data-k="${esc(key)}" ${on ? "checked" : ""}>
@@ -542,14 +667,32 @@ function fbItem(group, key, k, v, on = true, mono = false) {
 // Everything sent is built from these allow-lists. Without the report no value, evidence, note or free name goes in
 function verdictRecord(id) {
   const p = param(id), v = S.verdicts[id];
-  const rec = { key: p.key, label: p.fb_label, verdict: v.verdict };
-  if (!isPrivate() || p.detail) rec.outcome = p.outcome;
-  if (v.verdict === "wrong" && v.kind && asksKind(p)) rec.kind = v.kind;
-  if (!isPrivate() && v.verdict === "wrong") {
-    rec.value = valText(p);
-    if (v.note) rec.note = v.note;
-  }
+  const rec = { key: p.key, label: p.fb_label, verdict: v.verdict || "comment" };
+  if (!bare(id) || p.detail) rec.outcome = p.outcome;
+  if (v.verdict === "wrong" && v.kind && (!bare(id) || p.detail)) rec.kind = v.kind;
+  if (!bare(id) && v.verdict === "wrong") rec.value = valText(p);
+  if (!isPrivate() && v.note) rec.note = v.note;
+  if (isHidden(id)) rec.hidden = true;
   return rec;
+}
+// The report as it goes out. A blacked-out value is never added here, so it isn't in the mail or the file at all
+function reportRecord() {
+  const r = S.result;
+  const extra = (prefix, list, make) => list.flatMap((x, i) => {
+    const id = prefix + i;
+    return isHidden(id) ? [] : [{ ...make(x), ...(S.verdicts[id]?.note ? { note: S.verdicts[id].note } : {}) }];
+  });
+  return {
+    today: r.today,
+    groups: r.groups.map((g, gi) => ({ title: g.title, rows: g.params.flatMap((p, pi) => {
+      const id = `${gi}.${pi}`;
+      if (!isHidden(id)) return [{ key: p.key, label: p.label, value: valText(p), evidence: evText(p) }];
+      return dropsWhole(id) ? [] : [{ key: p.key, label: p.fb_label, hidden: true }];
+    }) })).filter((g) => g.rows.length),
+    suppliers: extra("s", r.suppliers, (x) => ({ org: x.org_he, text: supplierText(x) })),
+    minor: extra("m", r.minor, (m) => ({ org: m.org_he, text: minorText(m) })),
+    hidden_rows: S.hidden.size,
+  };
 }
 function statsRecord() {
   const st = S.result.stats;
@@ -575,11 +718,22 @@ $("#to-feedback").addEventListener("click", async () => {
   $("#fb-answers-card").hidden = !A.length;
   $("#fb-answers").innerHTML = A.map((a) => fbItem("answers", a[0], a[1], a[2])).join("");
 
+  $("#fb-report-card").hidden = isPrivate();
+  if (!isPrivate()) {
+    const rep = reportRecord();
+    const line = (k, v) => `<div class="fb-rep"><span>${esc(k)}</span><b>${v}</b></div>`;
+    $("#fb-report").innerHTML = rep.groups.map((g) => `<div class="k">${esc(g.title)}</div>` + g.rows.map((x) =>
+      line(x.label, x.hidden ? `<span class="redact" role="img" aria-label="מושחר"></span>` : esc(x.value))).join("")).join("") +
+      (rep.suppliers.length ? `<div class="k">פירוט ספקים</div>` + rep.suppliers.map((x) => line(x.org, esc(x.text))).join("") : "") +
+      (rep.minor.length ? `<div class="k">אירועי תשלום זניחים</div>` + rep.minor.map((x) => line(x.org, esc(x.text))).join("") : "");
+  }
+
   const ans = answered();
   $("#fb-verdicts").innerHTML = ans.length ? ans.map((id) => {
     const r = verdictRecord(id), bits = [VERDICT_HE[r.verdict]];
     if (r.kind) bits.push(KIND_HE[r.kind]);
     if (r.value !== undefined) bits.push(`המנוע כתב: ${r.value}`);
+    if (r.hidden) bits.push("השורה מושחרת");
     if (r.note) bits.push(r.note);
     return fbItem("verdicts", id, r.label, bits.join(" · "));
   }).join("") : `<p class="small">לא נענו שורות.</p>`;
@@ -595,8 +749,8 @@ $("#to-feedback").addEventListener("click", async () => {
   $("#fb-unknown-note").textContent = (isPrivate()
     ? "לא מסומנים, כי כתובת שולח יכולה לרמוז במה את/ה משתמש/ת. אם לא מפריע לך, אפשר לסמן ולעזור ללמד את המנוע. "
     : "כדי ללמד את המנוע. ") + "יש כאן רק כתובת שולח ותבנית נושא, בלי מספרים ובלי שמך. שולחים של בריאות, תרומות, קהילה וילדים כבר הוצאו.";
-  $("#fb-unknown-card").hidden = !S.result.unknown.length;
-  $("#fb-unknown").innerHTML = S.result.unknown.map((u, i) => fbItem("unknown", i, `${u.domain} · ${u.count} מיילים`, u.skeleton, unknownOn)).join("");
+  $("#fb-unknown-card").hidden = !unknownList().length;
+  $("#fb-unknown").innerHTML = unknownList().map((u, i) => fbItem("unknown", i, `${u.domain} · ${u.count} מיילים`, u.skeleton, unknownOn)).join("");
   $$("#fb-unknown .fb-item").forEach((el) => el.classList.toggle("off", !unknownOn));
   go("s-feedback");
 });
@@ -618,7 +772,8 @@ function buildFeedback() {
     answers: Object.fromEntries(Object.entries(S.answers).filter(([k]) => ka.has(k))),
     verdicts: answered().filter((id) => kv.has(id)).map(verdictRecord),
     stats: ks.has("all") ? statsRecord() : null,
-    unknown_senders: S.result.unknown.filter((_, i) => ku.has(String(i))),
+    unknown_senders: unknownList().filter((_, i) => ku.has(String(i))),
+    ...(isPrivate() ? {} : { report: reportRecord() }),
   };
 }
 

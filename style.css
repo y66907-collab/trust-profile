@@ -163,7 +163,35 @@ textarea { min-height: 84px; resize: vertical; }
 .wrong-more { margin-top: 14px; }
 .wrong-more .f { font-weight: 600; }
 
+/* the report with redactions */
+.rev-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+.rv-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1.25fr); gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+.rv-row:first-of-type { border-top: 0; }
+.rv-v { grid-row: 1 / span 2; padding-top: 2px; cursor: pointer; }
+.rv-v input { width: 22px; height: 22px; accent-color: var(--tq); cursor: pointer; }
+.rv-lab { color: var(--muted); font-size: 15px; }
+.rv-val { font-weight: 700; overflow-wrap: anywhere; }
+.rv-val.none { font-weight: 400; color: var(--muted); }
+.rv-ev { grid-column: 2 / -1; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.rv-act, .rv-kinds { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.rv-note { grid-column: 2 / -1; margin-top: 8px; width: 100%; min-height: 64px; }
+.redact { display: inline-block; width: min(240px, 100%); height: 1.1em; background: #000; border-radius: 2px; vertical-align: middle; }
+.chip { min-height: 34px; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; }
+.chip:hover { background: var(--tq-soft); border-color: var(--tq-line); }
+.chip.on { background: var(--tq); border-color: var(--tq); color: #fff; font-weight: 600; }
+.chip.no.on { background: var(--warn); border-color: var(--warn); }
+.rv-act .link { margin-inline-start: 6px; }
+#fb-report .k { font-weight: 700; margin: 14px 0 4px; color: var(--tq-deep); }
+#fb-report .k:first-child { margin-top: 0; }
+.fb-rep { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.fb-rep span:first-child { color: var(--muted); }
+.fb-rep b { overflow-wrap: anywhere; }
+
 @media (max-width: 560px) {
+  .rv-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .rv-v { grid-row: 1 / span 3; }
+  .rv-val, .rv-ev, .rv-act, .rv-kinds, .rv-note { grid-column: 2; }
+  .fb-rep { grid-template-columns: 1fr; gap: 0; }
   .row { grid-template-columns: 1fr; gap: 2px; }
   body { font-size: 16px; }
   h1 { font-size: 25px; }
