@@ -506,6 +506,24 @@ def run(payload_json: str) -> str:
     if r := has("חברות על השם שלך"):
         say("חברות על השם שלך", f"ברשם החברות, לפי השם בלבד: {r['v']}.")
 
+    # ---- what the AI paragraph may see: subjects from businesses only, with whatever identifies someone taken out. `readable`
+    # already leaves out personal senders and excluded sectors. A stranger's name inside a subject can't be recognised here
+    name_words = {w for n in own_names + ([hh["name"]] if hh else []) for w in n.split() if len(w) >= 2}
+
+    def bare(subject):
+        t = re.sub(r"\S+@\S+|https?://\S+|\d+", " ", subject)
+        for w in name_words:
+            t = t.replace(w, " ")
+        return re.sub(r"\s+", " ", re.sub(r"ת\.?\s*ז\.?", " ", t)).strip(" -–:|,.")
+
+    seen_subjects, ai_input = set(), []
+    for m in sorted(readable, key=lambda x: x.sent_at, reverse=True):
+        text = bare(m.subject)
+        who = m.org_he or m.domain
+        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects and len(ai_input) < 400:
+            seen_subjects.add((who, text))
+            ai_input.append({"d": m.sent_at[:7], "o": who, "s": text[:160]})
+
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]
     # mail known only from a search has an empty subject. It counts towards its sender, under the subject of the mail opened
@@ -542,7 +560,7 @@ def run(payload_json: str) -> str:
     return json.dumps({
         "rule_version": rules["version"], "today": today, "stats": stats,
         "groups": [{"title": t, "params": [{"label": l, **r, **row_meta(l, r)} for l, r in rows]} for t, rows in groups],
-        "portrait": portrait,
+        "portrait": portrait, "ai_input": ai_input,
         "suppliers": [{"org_he": e.org_he, "first": ym(e.first), "last": ym(e.last), "months": e.months_active,
                        "active": e.status == "active", "holder": holder_he[e.holder]}
                       for e in sorted(rel, key=lambda e: -e.months_active)],

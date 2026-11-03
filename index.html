@@ -46,7 +46,7 @@
       <h2>חשוב לדעת</h2>
       <ul class="facts">
         <li><svg class="ico"><use href="#i-env"/></svg><div><b>בעיקר בודקים את המעטפה:</b> מי שלח, למי, הנושא והתאריך. תוכן נקרא רק במיילים על מגורים, עבודה, טיסות ורשתות, כדי לזהות עיר, מעסיק, יעדים וקישורים. הטקסט והרחוב לא נשמרים, ואין בבדיקה דת, בריאות או דעות.</div></li>
-        <li><svg class="ico"><use href="#i-lock"/></svg><div><b>הבדיקה רצה אצלך:</b> בדפדפן שלך, בלי שרת. בסוף נשלח רק מה שתאשר/י.</div></li>
+        <li><svg class="ico"><use href="#i-lock"/></svg><div><b>הבדיקה רצה אצלך:</b> בדפדפן שלך. שני דברים יוצאים ממנו, ואפשר לכבות כל אחד מהם במסך החיבור. את הדוח נשלח רק אם תאשר/י.</div></li>
         <li><svg class="ico"><use href="#i-unlink"/></svg><div><b>הגישה מתבטלת לבד</b> מיד כשהקריאה נגמרת.</div></li>
         <li><svg class="ico"><use href="#i-eye"/></svg><div><b>לא חייבים לשתף את התוצאה.</b> אפשר לשמור אותה לעצמך ולענות רק אם המנוע צדק. לפני השליחה רואים בדיוק מה נשלח.</div></li>
       </ul>
@@ -99,7 +99,10 @@
       </div>
       <label class="card web-ok"><input type="checkbox" id="web-ok" checked>
         <div><b>לחפש את השם שלי גם בגוגל ובמאגרים ציבוריים</b>
-        <div class="small">כאן השם, ורק השם, יוצא מהדפדפן: לשירות חיפוש ולמאגרי הממשלה. אפשר להוריד את הסימון.</div></div></label>
+        <div class="small">השם, ורק השם, נשלח לשירות חיפוש ולמאגרי הממשלה. אפשר להוריד את הסימון.</div></div></label>
+      <label class="card web-ok"><input type="checkbox" id="ai-ok" checked>
+        <div><b>לתת ל-AI לכתוב עוד משפטים על מה שעולה מהמיילים</b>
+        <div class="small">נושאי מיילים מגופים ועסקים נשלחים ל-Claude של Anthropic, עם השולח והחודש. בלי השם שלך, בלי ספרות, בלי תוכן המיילים ובלי מיילים מאנשים פרטיים. אפשר להוריד את הסימון.</div></div></label>
       <div class="actions">
         <button class="btn google" id="connect"><svg class="ico" style="margin:0"><use href="#i-env"/></svg>חיבור Gmail</button>
         <button class="btn ghost" data-go="s-details">חזרה</button>
@@ -139,6 +142,7 @@
     <div class="card portrait" id="rep-portrait" hidden>
       <h2>בכמה מילים</h2>
       <p class="portrait-text"></p>
+      <div class="portrait-ai" hidden><b>נכתב על ידי AI, מנושאי מיילים. ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
       <p class="small">כל משפט נבנה משורה בדוח שלמטה. בלי ציון, בלי המלצה ובלי דעה.</p>
     </div>
     <div class="card hero" id="rep-hero" hidden>
@@ -204,6 +208,7 @@
     <div class="card portrait" id="rev-portrait" hidden>
       <h2>בכמה מילים</h2>
       <p class="portrait-text"></p>
+      <div class="portrait-ai" hidden><b>נכתב על ידי AI, מנושאי מיילים. ייתכנו טעויות:</b><p class="portrait-ai-text"></p></div>
       <p class="small">כך זה יישלח. כשמורידים V משורה, המשפט שלה יורד מכאן.</p>
     </div>
     <div id="rev-groups"></div>
@@ -239,7 +244,7 @@
   <!-- 8. feedback preview -->
   <section class="screen" id="s-feedback" data-step="6">
     <h1>זה מה שיישלח ל<span class="to-name"></span></h1>
-    <p class="lead">שום דבר לא יוצא לפני שלוחצים שליחה. אפשר להוריד כל פרט שלא רוצים.</p>
+    <p class="lead">שום דבר מהדוח לא יוצא לפני שלוחצים שליחה. אפשר להוריד כל פרט שלא רוצים.</p>
     <div class="card soft" id="fb-private-note" hidden><b>מה שכתוב בדוח לא נשלח.</b> נשלחות רק התשובות שלך, כמו שמופיעות כאן.</div>
     <div class="card soft" id="fb-partial" hidden><b>המעבר על השולחים נעצר באמצע.</b> מה שיישלח מבוסס על מה שנבדק עד אז.</div>
     <div class="card" id="fb-report-card" hidden><h2>הדוח שיישלח</h2><div class="scroll" id="fb-report"></div></div>
