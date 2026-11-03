@@ -51,7 +51,7 @@ async function run(browser, mode) {
       return route.fulfill({ body: 'window.IMTRUSTME={googleClientId:"test.apps.googleusercontent.com",appName:"imtrustme",sendUrl:"https://script.google.com/macros/s/test/exec",feedbackTo:"יהודית",years:3};', contentType: "text/javascript" });
     const f = path.join(SITE, p);
     if (!fs.existsSync(f)) return route.fulfill({ status: 404 });
-    const type = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", py: "text/plain", png: "image/png" }[p.split(".").pop()];
+    const type = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", py: "text/plain", png: "image/png", svg: "image/svg+xml" }[p.split(".").pop()];
     route.fulfill({ body: fs.readFileSync(f), contentType: type + "; charset=utf-8" });
   });
   await ctx.route("https://accounts.google.com/**", (r) => r.fulfill({ body: GSI, contentType: "text/javascript" }));
@@ -95,6 +95,7 @@ async function run(browser, mode) {
   await page.goto("https://site.test/index.html");
   await shot("1-welcome");
   assert(await page.evaluate(() => document.querySelector(".logo").naturalWidth > 0), "logo did not load");
+  assert(await page.evaluate(() => document.querySelector(".brand-mark").naturalWidth > 0), "mark did not load");
 
   // the purpose stays out of everything a participant can read, on the page and in the engine's rows
   const FORBIDDEN = /משכיר|שכירת|שכר דירה|דירה|פרופיל/;
