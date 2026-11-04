@@ -15,7 +15,7 @@ const PAGE = `${SITE_ORIGIN}/trust-profile/dev.html`;
 const REVOKE = process.env.LAB_REVOKE_URL || "https://oauth2.googleapis.com/revoke";
 const SITE_DIR = path.join(__dirname, "..", "site");
 const SITE_FILES = new Set(["index.html", "app.js", "worker.js", "style.css", "engine/engine.py", "engine/pilot.py",
-  "engine/senders.json", "engine/labels.json", "engine/rules.json", "engine/excluded_hashes.json"]);
+  "engine/senders.json", "engine/orgs.json", "engine/labels.json", "engine/rules.json", "engine/excluded_hashes.json"]);
 const TOKEN_LIFE_MS = 50 * 60 * 1000;
 const MAX_BODY = 512 * 1024 * 1024;
 const CONTENT_TYPES = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", py: "text/plain" };

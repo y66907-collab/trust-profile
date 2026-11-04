@@ -588,7 +588,7 @@ async function readMailbox() {
   sentIds.forEach((m) => place(m, { from: own, sent: true }));
   show();
 
-  const [senders, labels] = await Promise.all(["senders", "labels"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
+  const [senders, labels, orgs] = await Promise.all(["senders", "labels", "orgs"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
   const known = [...new Set([...Object.keys(senders), ...labels.map((l) => l.domain), ...PLATFORM_DOMAINS])];
 
   // known companies: all their mail, and mail sent to them
@@ -659,7 +659,7 @@ async function readMailbox() {
   if ($("#ai-ok").checked) await pool(AI_TOPICS, 4, async (q) => { (await search(q)).slice(0, 25).forEach((m) => toOpen.add(m.id)); });
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
-  const readOut = await readRelevant(search, pool, drop, senders).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
+  const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
   const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
