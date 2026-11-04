@@ -406,7 +406,7 @@ def run(payload_json: str) -> str:
                 ("התראות אבטחה בתיבה", life_row("security")), ("מסמכי הכנסה שיושבים בתיבה", life_row("documents")),
             ]),
         ]
-        groups = top + groups + rest
+        groups = groups + rest + top  # the mailbox statistics interest few people, so they go last
 
     # ---- the web and the public registries: by name only, so each row says it may be someone else
     out = p.get("outside") or {}
@@ -448,39 +448,29 @@ def run(payload_json: str) -> str:
 
     if r := has("עיר מגורים לפי חשבונות"):
         say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
-    if r := has("גר/ה שם"):
-        say("גר/ה שם", f"בעיר הזו {r['v']}.")
     if address:
         say("עדכון כתובת ברשות האוכלוסין", f"עדכון כתובת מגורים במשרד הפנים ב-{ym(address[-1].sent_at)}.")
-    if has("מיילים על מעבר מגורים"):
-        say("מיילים על מעבר מגורים", "התכתבות על מעבר מגורים.")
     # A mortgage in a subject is often an advert, so it counts only when the person wrote about it themselves
     own_mortgage = [m for m in grep("משכנתא") if m.direction == "out"]
     if own_mortgage:
-        say("משכנתא", f"התכתבות אישית על משכנתא, אחרונה ב-{ym(max(m.sent_at for m in own_mortgage))}.")
+        say("משכנתא", "יש משכנתא.")
     if has("מיילים על רכישת נכס"):
-        say("מיילים על רכישת נכס", "מיילים על רכישת נכס.")
-    if r := has("חשבונות שוטפים: חשמל, גז, מים, תקשורת"):
-        say("חשבונות שוטפים: חשמל, גז, מים, תקשורת", "חשבונות שוטפים: " + ", ".join(re.sub(r"\s*\([^)]*\)", "", str(r["v"])).split(", ")[:4]) + ".")
+        say("מיילים על רכישת נכס", "מסמכים על רכישת נכס.")
     if (r := has("מעסיק לפי מיילים")) and "שולח" not in (r.get("note") or ""):  # the sender of the slips may be a payroll firm
         say("מעסיק לפי מיילים", f"עבודה ב{r['v']}.")
     if r := has("ותק לפי מיילים מהמעסיק"):
-        say("ותק לפי מיילים מהמעסיק", f"מיילים מהמעסיק {r['v']}.")
+        say("ותק לפי מיילים מהמעסיק", f"עבודה שם {r['v'].replace('מ-', 'לפחות מ-', 1)}.")
     if r := has("היקף משרה"):
         say("היקף משרה", f"היקף משרה של {r['v']}.")
     if r := has("מוסד אקדמי בתיבה"):
         say("מוסד אקדמי בתיבה", f"קשר בשנתיים האחרונות עם מוסד אקדמי: {r['v']}.")
     if has("חיסכון פנסיוני פעיל"):
         say("חיסכון פנסיוני פעיל", "חיסכון פנסיוני פעיל.")
-    if has("מיילים על הוראות קבע"):
-        say("מיילים על הוראות קבע", "תשלומים בהוראת קבע.")
     alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
     if has(alerts):
         say(alerts, "יש בתיבה התראות מהבנק.")
     elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
         say(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
-    if r := has("הקשר הארוך ביותר עם ספק"):
-        say("הקשר הארוך ביותר עם ספק", f"הקשר הארוך ביותר עם ספק: {r['v']}.")
     problems = "בעיות תשלום מהותיות בכל התקופה"
     if has(problems):
         say(problems, "יש בתיבה בעיות תשלום מהותיות.")
@@ -489,11 +479,11 @@ def run(payload_json: str) -> str:
     if has("מיילים ששלחת על חוזים", 2):
         say("מיילים ששלחת על חוזים", "התכתבות יוצאת על חוזים והסכמים.")
     if has("קורסים, כנסים והרצאות", 3):
-        say("קורסים, כנסים והרצאות", "מיילים על קורסים, כנסים והרצאות.")
+        say("קורסים, כנסים והרצאות", "קורסים, כנסים והרצאות.")
     if r := has("יעדי טיסה"):
         say("יעדי טיסה", f"טיסות אל {r['v']}.")
     for label, _ in interest_rows:
-        if INTEREST_KEYS.get(label) in ("fitness", "tech", "career", "travel", "entertainment"):  # having a credit card says nothing
+        if INTEREST_KEYS.get(label) in ("fitness", "tech", "travel"):  # a streaming account or a credit card says nothing about a person
             say(label, label, join="תחומי עניין")
     for label, r in plat_rows:
         if r.get("link"):
