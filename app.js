@@ -25,7 +25,7 @@ const INTERESTS = [
 // Findings a person finds interesting about themselves. Each is a count of subjects: the search returns ids, nothing is opened
 const LIFE_QUERIES = {
   job_search: "subject:(ראיון OR משרה OR מועמדות OR \"קורות חיים\" OR interview OR candidate OR application)",
-  flights: "subject:(טיסה OR \"boarding pass\" OR itinerary OR \"כרטיס טיסה\")",
+  flights: "subject:(טיסה OR \"boarding pass\" OR itinerary OR \"כרטיס טיסה\") -subject:(פרסומת OR מבצע OR הגרלה)",
   orders: "subject:(\"ההזמנה שלך\" OR \"your order\" OR משלוח OR shipped OR \"order confirmation\")",
   learning: "subject:(קורס OR כנס OR הרצאה OR webinar OR conference OR meetup OR course)",
   contracts: "subject:(חוזה OR הסכם OR contract OR agreement)",
@@ -44,10 +44,24 @@ const SIGNAL_QUERIES = [
   'subject:"כתב תביעה"', 'subject:"תביעה קטנה"', 'subject:"בית משפט"', 'subject:"בית המשפט"', 'subject:"הוצאה לפועל"',
   'subject:"רשות האכיפה"', "subject:עיקול", "subject:chargeback", 'subject:"הכחשת עסקה"',
   'subject:"חשבון מוגבל"', 'subject:"שיק חוזר"', 'subject:"שיקים חוזרים"', 'subject:"חריגה ממסגרת"', 'subject:"הגבלת חשבון"', 'subject:"התראה לפני הגבלה"',
-  'subject:"הסכם הלוואה"', 'subject:"נתוני אשראי"', 'subject:"דוח אשראי"', 'subject:"דירוג אשראי"', "subject:BDI", 'subject:"שינוי כתובת מגורים"', "subject:משכנתא",
+  'subject:"הסכם הלוואה"', 'subject:"מצב הלוואה"', 'subject:"לוח סילוקין"', 'subject:"נתוני אשראי"', 'subject:"דוח אשראי"', 'subject:"דירוג אשראי"', "subject:BDI", 'subject:"שינוי כתובת מגורים"', "subject:משכנתא",
   'subject:"תלוש שכר"', 'subject:"תלוש משכורת"', 'subject:"תלוש לחודש"', "subject:payslip",
   "subject:(רבעוני OR תקופתי OR שנתי) subject:(פנסיה OR גמל OR השתלמות)",
 ];
+// Gmail matches whole words, so a search for פנסיה misses בפנסיה, and a row can read 0 while the mail is there.
+// Every Hebrew word in a subject search is also asked for with the prefixes that attach to it.
+const HE_PREFIXES = ["", "ה", "ב", "ל", "ו", "מ", "ש", "כ", "וה", "שה", "וב", "ול"];
+function widenSubjects(q) {
+  return q.replace(/subject:(\([^()]*\)|"[^"]*"|\S+)/g, (_, value) => {
+    const terms = value.startsWith("(") ? value.slice(1, -1).split(/\s+OR\s+/) : [value];
+    const wide = terms.flatMap((term) => {
+      const word = term.replace(/^"|"$/g, "");
+      if (!/^[א-ת]/.test(word)) return [term];
+      return HE_PREFIXES.map((p) => (term.startsWith('"') ? `"${p}${word}"` : p + word));
+    });
+    return `subject:(${wide.join(" OR ")})`;
+  });
+}
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -245,7 +259,7 @@ const SCOPE_RX = /(?:היקף|אחוז|חלקיות)\s*משרה\D{0,12}(\d{2,3})
 const READ_TOPICS = {
   residence: { q: 'subject:(חוזה OR הסכם OR שכירות OR ארנונה OR עירייה OR "תאגיד המים" OR "חשבון מים")', max: 40, pdf: true },
   work: { q: 'subject:("תלוש שכר" OR "תלוש משכורת" OR "אישור העסקה" OR "טופס 106" OR payslip)', max: 15, pdf: true },
-  flights: { q: 'subject:(טיסה OR "boarding pass" OR itinerary OR "כרטיס טיסה")', max: 25, pdf: false },
+  flights: { q: 'subject:(טיסה OR "boarding pass" OR itinerary OR "כרטיס טיסה") -subject:(פרסומת OR מבצע OR הגרלה)', max: 25, pdf: false },
 };
 const SOCIAL = [
   ["LinkedIn", "from:linkedin.com", /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/comm\/in\/([A-Za-z0-9%_-]+)\?[^"'\s]*trk=[^"'\s]*header-0-profile_glimmer/, (u) => `https://www.linkedin.com/in/${u}`],
@@ -500,7 +514,7 @@ async function readMailbox() {
     } while (token && inPeriod);
     return out;
   }
-  const search = (q) => list("q=" + encodeURIComponent(`${q} ${after}`));
+  const search = (q) => list("q=" + encodeURIComponent(`${widenSubjects(q)} ${after}`));
 
   // 1. every id in the period (cheap). The oldest id gives the mailbox age
   stage("list", "now");
@@ -693,7 +707,7 @@ async function readMailbox() {
 
   // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
   // is left unaccounted for. The final run replaces the report, so nothing is sent from a result that was only partial
-  S.background = (async () => {
+  S.scanned = (async () => {
     try {
       const asked = new Set([...known, ...PERSONAL_DOMAINS]);
       const queue = [...pending.keys()].sort((x, y) => idTime(y) - idTime(x));
@@ -724,6 +738,7 @@ async function readMailbox() {
     window.onbeforeunload = null;
     showBackground();
   })();
+  S.background = S.scanned.then(deepenAi); // feedback waits for the scan, not for this
 }
 
 function showBackground(done, total) {
@@ -878,21 +893,38 @@ const AI_TOPICS = [
 ];
 const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה";
 const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
-async function askAi(r) {
+async function askAi(r, deep = false) {
   if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
   // Facts from the report come first, so a sentence built on one can be taken down when its row is blacked out
   const facts = (r.ai_facts || []).map((x) => ({ label: x.label, line: ["", "עובדה מהדוח", x.text.slice(0, 190)] }));
   if (S.employer?.snippet) facts.push({ label: null, line: ["", "על מקום העבודה", `${S.employer.name}: ${S.employer.snippet}`.slice(0, 190)] });
   const items = [...facts.map((x) => x.line), ...r.ai_input.map((x) => [x.d, x.o, x.s])];
-  const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(90000),
-    body: JSON.stringify({ kind: "imtrustme-ai", items }) }).then((x) => x.json());
+  const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(deep ? 300000 : 90000),
+    body: JSON.stringify({ kind: "imtrustme-ai", items, ...(deep ? { deep: true } : {}) }) }).then((x) => x.json());
   if (!reply.ok) { console.warn("AI paragraph not written:", reply.error); return; }
   const valid = (x) => typeof x.text === "string" && x.text.length <= 220 && !AI_BLOCKED.test(x.text) &&
     Array.isArray(x.sources) && x.sources.length && x.sources.every((i) => Number.isInteger(i) && i >= 0 && i < items.length);
   const withLabels = (x) => ({ ...x, labels: x.sources.map((i) => facts[i]?.label).filter(Boolean) });
   S.ai = (reply.sentences || []).filter(valid).slice(0, 12).map(withLabels);
-  S.aiSummary = (reply.summary || []).filter(valid).filter((x) => typeof x.topic === "string" && x.topic.length <= 30).slice(0, 6).map(withLabels);
+  const summary = (reply.summary || []).filter(valid).filter((x) => typeof x.topic === "string" && x.topic.length <= 30).slice(0, 10).map(withLabels);
+  if (deep && !summary.length) return false; // the first reading stays
+  S.aiSummary = summary;
   S.run.ai_sentences = S.ai.length + S.aiSummary.length;
+  return true;
+}
+// The first conclusions come with the report and rest on what was known then. Once the whole mailbox is read they are
+// written again from all of it, more slowly. Gmail access is already gone by now: this reads only what the report holds
+async function deepenAi() {
+  if ($("#s-done").classList.contains("on") || !S.result?.ai_input?.length) return;
+  try {
+    if (!(await askAi(S.result, true))) return;
+    const next = structuredClone(S.result);
+    next.groups = next.groups.filter((g) => g.title !== AI_SUMMARY && g.title !== AI_GROUP);
+    applyFinal(next);
+    followBlackouts();
+  } catch (e) {
+    console.warn("deep conclusions stopped", e);
+  }
 }
 function attachAi(r) {
   const row = (x, i, prefix, label) => ({ label, v: x.text, n: x.sources.length, span: "", why: null, note: "נכתב על ידי AI, ייתכנו טעויות", source_labels: x.labels,
@@ -1214,7 +1246,7 @@ $("#to-feedback").addEventListener("click", async () => {
   const btn = $("#to-feedback"), label = btn.textContent;
   btn.disabled = true;
   btn.textContent = "מסיימים לעבור על השולחים…";
-  await S.background;
+  await S.scanned;
   btn.disabled = false;
   btn.textContent = label;
   const A = [["q-overall", "כמה נכון בסך הכול", radio("q-overall")], ["q-ux", "מה היה מבלבל", $("#q-ux").value.trim()]].filter((a) => a[2]);

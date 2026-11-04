@@ -516,17 +516,33 @@ def run(payload_json: str) -> str:
 
     def bare(subject):
         t = re.sub(r"\S+@\S+|https?://\S+|\d+", " ", subject)
+        # a street and the strangers these notices quote identify someone, and neither helps a conclusion
+        t = re.sub(r"(?:ב?רחוב|רח['׳])\s+\S+(?:\s+\S+)?", " ", t)
+        t = re.sub(r"^.*?\b(?:has just read|paid you)\b", " ", t)
         for w in name_words:
             t = t.replace(w, " ")
         return re.sub(r"\s+", " ", re.sub(r"ת\.?\s*ז\.?", " ", t)).strip(" -–:|,.")
 
-    seen_subjects, ai_input = set(), []
+    # The AI reads for change over time, so every quarter gets its share of the lines, and within it every sender
+    def in_turns(lists):
+        out, i = [], 0
+        while True:
+            layer = [x[i] for x in lists if i < len(x)]
+            if not layer:
+                return out
+            out += layer
+            i += 1
+
+    seen_subjects, by_quarter = set(), {}
     for m in sorted(readable, key=lambda x: x.sent_at, reverse=True):
         text = bare(m.subject)
         who = m.org_he or m.domain
-        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects and len(ai_input) < 400:
+        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects:
             seen_subjects.add((who, text))
-            ai_input.append({"d": m.sent_at[:7], "o": who, "s": text[:160]})
+            quarter = (m.sent_at[:4], (int(m.sent_at[5:7]) - 1) // 3)
+            by_quarter.setdefault(quarter, {}).setdefault(who, []).append({"d": m.sent_at[:7], "o": who, "s": text[:160]})
+    quarters = [in_turns(list(senders.values())) for senders in by_quarter.values()]
+    ai_input = sorted(in_turns(quarters)[:400], key=lambda x: x["d"], reverse=True)
 
     # ---- feedback data: what the engine did not understand. Only sender domain, masked subject skeleton, count
     biz = [m for m in readable if m.direction == "in"]

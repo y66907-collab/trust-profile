@@ -154,10 +154,5 @@
   "org": "mei_kg",
   "org_he": "מי קרית גת (מים)",
   "city": "קרית גת"
- },
- {
-  "domain": "nogamy.com",
-  "match": "תלוש",
-  "event_type": "payslip"
  }
 ]
