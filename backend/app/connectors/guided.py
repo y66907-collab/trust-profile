@@ -27,6 +27,9 @@ class GuidedDownloadConnector(Connector):
     source_url: str
     steps_he: tuple[str, ...]
 
+    def not_ready_reason(self) -> str | None:
+        return "קריאת המסמך עוד לא נכתבה"
+
     def start(self, person_id: str, params: dict[str, Any]) -> StartResult:
         return StartResult(
             kind="instructions",

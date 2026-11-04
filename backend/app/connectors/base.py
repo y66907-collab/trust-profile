@@ -68,8 +68,20 @@ class Connector(ABC):
     @abstractmethod
     def complete(self, person_id: str, payload: dict[str, Any]) -> list[EvidenceDraft]: ...
 
+    def not_ready_reason(self) -> str | None:
+        """Why this source can't be used right now (missing keys, parser not written), or None if it works."""
+        return None
+
+    def note(self) -> str | None:
+        """Optional hint for the UI, e.g. an optional add-on that is switched off."""
+        return None
+
     def describe(self) -> dict[str, Any]:
+        reason = self.not_ready_reason()
         return {
+            "ready": reason is None,
+            "not_ready_reason": reason,
+            "note": self.note(),
             "key": self.key,
             "title": self.title_he,
             "kind": self.kind.value,

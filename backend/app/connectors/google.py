@@ -29,6 +29,9 @@ class GoogleConnector(Connector):
     scope_he = "שם, מייל ותמונה מחשבון Google. לא ניגש למיילים, לקבצים או ליומן."
     fields = ("google_account",)
 
+    def not_ready_reason(self) -> str | None:
+        return "שלד: עוד לא מחובר לגוגל (צריך OAuth client ו-token exchange)"
+
     def start(self, person_id: str, params: dict[str, Any]) -> StartResult:
         q = urlencode(
             {

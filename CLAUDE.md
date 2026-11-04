@@ -2,6 +2,9 @@
 
 Portable, user-owned, verified trust profile. Yudit (tech) & Yogev (business). Docs in Hebrew, code in English.
 
+**Always talk to Yudit in Hebrew.** Every reply, every progress note between tool calls, every summary — in Hebrew.
+Code, identifiers, commit messages and code comments stay in English.
+
 ## Non-negotiable product rules (enforced in code — keep them)
 1. **The profile belongs to the person.** Nothing is visible to anyone except through a ShareLink the person created.
 2. **Verification, not scoring.** No AI/trust score from social media. Evidence + proof level (1–4) only.

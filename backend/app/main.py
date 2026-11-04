@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api import demo, oauth, playground
 from app.api.routes import router
 from app.config import settings
 from app.db import Base, engine
@@ -17,6 +18,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Trust Profile API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(oauth.router)
+if settings.dev_mode:
+    app.include_router(playground.router)
+    app.include_router(demo.router)
 
 
 @app.get("/health")

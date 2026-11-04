@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Creds · בדיקת מאגרים</title>
+<style>
+  :root {
+    --bg: #f5f8fc; --card: #ffffff; --ink: #0f1d33; --muted: #5b6b82; --line: #dfe6f0;
+    --blue: #1f5eff; --blue-soft: #e8efff; --ok: #0f8a5f; --ok-soft: #e3f5ee; --warn: #b4540a; --warn-soft: #fdf0e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c1422; --card: #142035; --ink: #e8eef8; --muted: #9aabc4; --line: #24334d;
+      --blue: #6b95ff; --blue-soft: #1a2b4d; --ok: #4fd1a1; --ok-soft: #12322a; --warn: #f2a65a; --warn-soft: #3a2614;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 system-ui, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.3px; }
+  h1 span { color: var(--blue); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px;
+         display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  label { display: grid; gap: 6px; font-size: 14px; color: var(--muted); }
+  input { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+          border-radius: 10px; padding: 10px 12px; }
+  input:focus { outline: 2px solid var(--blue); border-color: transparent; }
+  input[dir="ltr"] { text-align: left; }
+  .full { grid-column: 1 / -1; }
+  button { font: inherit; font-weight: 600; color: #fff; background: var(--blue); border: 0;
+           border-radius: 10px; padding: 12px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .hint { font-size: 13px; color: var(--muted); margin: 0; }
+  #out { margin-top: 24px; display: grid; gap: 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 14px; }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  h2 { font-size: 16px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  .list { display: grid; gap: 8px; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+         display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: start; }
+  .row.match { border-color: var(--ok); }
+  .row.partial { opacity: .72; }
+  .exact { color: var(--ok); font-size: 12px; font-weight: 600; margin-inline-start: 6px; }
+  .tag { grid-row: span 2; background: var(--blue-soft); color: var(--blue); font-size: 12px; font-weight: 600;
+         border-radius: 8px; padding: 4px 8px; white-space: nowrap; }
+  .name { font-weight: 600; }
+  .meta { color: var(--muted); font-size: 14px; }
+  .city-ok { color: var(--ok); font-weight: 600; }
+  .empty { color: var(--muted); background: var(--card); border: 1px dashed var(--line); border-radius: 12px; padding: 14px; }
+  @media (max-width: 560px) { form { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>Creds</span> · בדיקת מאגרים</h1>
+  <p class="sub">מה מוכח רשמית על אדם: רישיונות מקצועיים וחברות, מתוך data.gov.il.</p>
+
+  <form id="f">
+    <label>שם בעברית
+      <input name="name_he" placeholder="ישראל ישראלי" autocomplete="off">
+    </label>
+    <label>שם באנגלית
+      <input name="name_en" dir="ltr" placeholder="Israel Israeli" autocomplete="off">
+    </label>
+    <label>עיר
+      <input name="city" placeholder="חיפה" autocomplete="off">
+    </label>
+    <label>מספר ת"ז (לא חובה)
+      <input name="id_number" inputmode="numeric" maxlength="9" placeholder="9 ספרות" autocomplete="off">
+    </label>
+    <p class="hint full">מספיק שם אחד, בעברית או באנגלית. מוצג כל מי שעולה בחיפוש: התאמה מלאה של השם קודם, והעיר מסמנת התאמה.
+      במאגרים הציבוריים אין מספרי ת"ז.
+      הת"ז נבדקת רק לתקינות מבנה, לא נשמרת ולא נשלחת לשום מקום.</p>
+    <button class="full" id="go">חפש</button>
+  </form>
+
+  <section id="out" aria-live="polite"></section>
+</main>
+
+<script>
+const $ = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+function rows(title, items) {
+  const sec = $("section");
+  sec.append($("h2", null, `${title} (${items.length})`));
+  if (!items.length) { sec.append($("div", "empty", "לא נמצא")); return sec; }
+  const list = $("div", "list");
+  for (const h of items) {
+    const r = $("div", "row" + (h.city_match ? " match" : "") + (h.exact ? "" : " partial"));
+    const name = $("span", "name", h.name);
+    if (h.exact) name.append($("span", "exact", "✔ התאמה מלאה"));
+    r.append($("span", "tag", h.registry), name);
+    const meta = $("span", "meta", h.detail);
+    if (h.city) {
+      meta.append(" · ");
+      meta.append($("span", h.city_match ? "city-ok" : null, (h.city_match ? "📍 " : "") + h.city));
+    }
+    r.append(meta);
+    list.append(r);
+  }
+  sec.append(list);
+  return sec;
+}
+
+document.getElementById("f").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = document.getElementById("go"), out = document.getElementById("out");
+  const body = Object.fromEntries(new FormData(ev.target));
+  if (!body.name_he.trim() && !body.name_en.trim()) {
+    out.replaceChildren($("div", "empty", "צריך שם, בעברית או באנגלית"));
+    return;
+  }
+  btn.disabled = true; btn.textContent = "מחפש ב-7 מאגרים…"; out.replaceChildren();
+  try {
+    const res = await fetch("/playground/search", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`שגיאה ${res.status}`);
+    const d = await res.json();
+
+    const chips = $("div", "chips");
+    if (d.id_valid === true) chips.append($("span", "chip ok", "✔ ת\"ז תקינה במבנה"));
+    if (d.id_valid === false) chips.append($("span", "chip warn", "✖ ת\"ז לא תקינה"));
+    const exactHits = d.people.filter(h => h.exact).length;
+    if (d.people.length) chips.append($("span", "chip" + (exactHits ? " ok" : ""), `✔ ${exactHits} התאמות שם מלאות מתוך ${d.people.length}`));
+    const cityHits = d.people.filter(h => h.city_match).length;
+    if (body.city) chips.append($("span", "chip" + (cityHits ? " ok" : ""), `📍 ${cityHits} התאמות עיר`));
+    for (const e of d.errors) chips.append($("span", "chip warn", "⚠ " + e));
+    if (chips.childElementCount) out.append(chips);
+
+    out.append(rows("בעלי מקצוע ברישיון", d.people), rows("חברות שהשם מופיע בהן", d.companies));
+  } catch (e) {
+    out.append($("div", "empty", "משהו נכשל: " + e.message));
+  } finally {
+    btn.disabled = false; btn.textContent = "חפש";
+  }
+});
+</script>
+</body>
+</html>
