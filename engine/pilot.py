@@ -24,7 +24,7 @@ BANKS = {"fibi.co.il": "הבינלאומי", "bankhapoalim.co.il": "הפועלי
          "pagi.co.il": "פאגי", "bankmassad.co.il": "מסד", "onezerobank.com": "וואן זירו"}
 PLATFORMS = [("LinkedIn", ("linkedin.com",)), ("Facebook", ("facebookmail.com", "facebook.com")),
              ("Instagram", ("instagram.com", "mail.instagram.com")), ("GitHub", ("github.com",))]
-PAYSLIP = re.compile(r"תלוש (שכר|משכורת)|תלוש לחודש|payslip", re.I)
+PAYSLIP = re.compile(r"תלוש (שכר|משכורת)|תלוש לחודש|payslip|^\W*תלוש(\s+[\d/.\-]+)?\W*$", re.I)
 # kept out of the feedback file altogether, even before the participant reviews it: health, donations, religion,
 # community, children. The engine does not read these either (excluded sectors); this covers senders it doesn't know yet
 SENSITIVE = re.compile(r"אמונה|נטפרי|netfree|תרומ|ישיב|קהיל|בית כנסת|בית הכנסת|צדק|חסד|תורה|רפוא|מרפא|קופת חולים|בדיק|תור ל|"
@@ -165,6 +165,16 @@ def run(payload_json: str) -> str:
         parts = m.domain.split(".")
         if any(hashlib.sha256(".".join(parts[i:]).encode()).hexdigest() in hidden for i in range(len(parts) - 1)):
             m.sender_class, m.org, m.org_he, m.sector = "excluded", None, None, "private"
+    # The public table (tools/build_orgs.py) only names a sender or keeps it out. It doesn't make it a supplier
+    orgs = json.loads((HERE / "orgs.json").read_text(encoding="utf-8"))
+    for m in msgs:
+        if m.sender_class == "unregistered":
+            parts = m.domain.split(".")
+            e = next((orgs[".".join(parts[i:])] for i in range(len(parts) - 1) if ".".join(parts[i:]) in orgs), None)
+            if e and e["sector"] in rules["excluded_sectors"]:
+                m.sender_class, m.org, m.org_he, m.sector = "excluded", None, None, e["sector"]
+            elif e:
+                m.org_he = e["org_he"]
     templates = engine.mine_templates(msgs)
     engine.apply_labels(msgs, templates, labels)
     eps = engine.build_episodes(msgs, rules, today)
@@ -224,6 +234,14 @@ def run(payload_json: str) -> str:
     slips = [m for m in readable if m.direction == "in" and (m.event_type == "payslip" or PAYSLIP.search(m.subject))]
     slip_from = Counter(m.org_he or m.domain for m in slips)
     employer = [m for m in msgs if m.sector == "employer"]
+    if not employer:  # no known employer: an unlisted sender of slips in different months is one
+        months = {}
+        for m in slips:
+            if not m.org:
+                months.setdefault(m.domain, set()).add(m.sent_at[:7])
+        repeat = max(months, key=lambda d: len(months[d]), default=None)
+        if repeat and len(months[repeat]) >= 2:
+            employer = [m for m in msgs if m.domain == repeat]
     pension = [m for m in readable if PENSION.search(m.subject)]
 
     # ---- identity
@@ -301,7 +319,7 @@ def run(payload_json: str) -> str:
             ("בנק לפי מיילים", P(", ".join(bank_names) if banks else "לא זוהה", banks)),
         ]),
         ("עבודה והכנסה", [
-            ("מעסיק לפי מיילים", P(employer[0].org_he, employer) if employer else
+            ("מעסיק לפי מיילים", P(employer[0].org_he or employer[0].domain, employer) if employer else
              (P(", ".join(k for k, _ in slip_from.most_common(2)), slips, note="לפי שולח התלושים") if slips
               else NA("המעסיק לא מוכר עדיין למנוע"))),
             ("ותק לפי מיילים מהמעסיק", P(f"מ-{ym(min(m.sent_at for m in employer))}", employer) if employer

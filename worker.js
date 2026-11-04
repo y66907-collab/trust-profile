@@ -1,7 +1,7 @@
 // Runs the Python engine (engine.py + pilot.py) in Pyodide, off the page's main thread.
 // Nothing here talks to any server except the CDN that serves Pyodide and this site's own engine files.
 const PYODIDE = "https://cdn.jsdelivr.net/npm/pyodide@0.29.3/";
-const FILES = ["engine.py", "pilot.py", "senders.json", "labels.json", "rules.json", "excluded_hashes.json"];
+const FILES = ["engine.py", "pilot.py", "senders.json", "orgs.json", "labels.json", "rules.json", "excluded_hashes.json"];
 
 importScripts(PYODIDE + "pyodide.js");
 
