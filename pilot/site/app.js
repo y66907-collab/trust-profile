@@ -815,7 +815,7 @@ const valHtml = (p) => (p.links ? (p.lead ? `${esc(p.lead)}<br>` : "") + p.links
   ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
-const HERO = ["reply_time", "active_hours", "companies", "promo_share", "unread", "sent_per_week"];
+const HERO = ["reply_time", "sent_per_week"];
 // ---------------------------------------------------------------- the workplace
 // Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
 const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
@@ -925,7 +925,7 @@ function topLinks() {
 function summaryLines() {
   const summary = visibleRows(AI_SUMMARY).map((p) => ({ topic: p.label, text: p.v }));
   const employer = rowsOf("מקום העבודה")[0];
-  if (employer && !isHidden(employer.id) && employer.p.lead) summary.push({ topic: employer.p.label, text: employer.p.lead });
+  if (employer && !isHidden(employer.id) && employer.p.lead) summary.push({ topic: "עבודה", text: `${S.employer.name}: ${employer.p.lead}.` });
   return summary;
 }
 
@@ -945,17 +945,14 @@ function portraitLines(mainOnly) {
 }
 const portraitText = () => portraitLines().map((l) => l.text).join(" ");
 function showPortrait(card) {
-  const lines = portraitLines(), summary = summaryLines(), ai = aiText(), links = topLinks();
-  const line = (l) => `<div class="p-line"><span>${esc(l.topic)}</span><div>${esc(l.text)}</div></div>`;
-  // The conclusions go on top. Without them, the facts by topic take that place
-  $(`${card}`).hidden = !lines.length && !summary.length && !ai;
+  const summary = summaryLines(), lines = summary.length ? summary : portraitLines(true), links = topLinks();
+  // One section: each topic once, with its points under it
+  const topics = new Map();
+  lines.forEach((l) => { if (!topics.has(l.topic)) topics.set(l.topic, []); topics.get(l.topic).push(l.text); });
   const wait = S.aiPending ? `<p class="portrait-wait">עוד רגע: כותבים מסקנות ומחפשים קישורים…</p>` : "";
-  $(`${card} .portrait-top`).innerHTML = wait + (summary.length ? summary : portraitLines(true)).map(line).join("");
+  $(`${card}`).hidden = !lines.length && !wait;
+  $(`${card} .portrait-top`).innerHTML = wait + [...topics].map(([topic, texts]) => `<div class="p-line"><span>${esc(topic)}</span><div>${texts.map((t) => `<p>${esc(t)}</p>`).join("")}</div></div>`).join("");
   $(`${card} .portrait-links`).innerHTML = links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("");
-  $(`${card} .portrait-more`).hidden = !lines.length && !ai;
-  $(`${card} .portrait-text`).innerHTML = lines.map(line).join("");
-  $(`${card} .portrait-ai`).hidden = !ai;
-  $(`${card} .portrait-ai-text`).textContent = ai;
 }
 function renderReport() {
   showPortrait("#rep-portrait");

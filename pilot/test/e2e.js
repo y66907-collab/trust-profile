@@ -261,8 +261,9 @@ async function run(browser, mode) {
       assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
       // the paragraph is added above the report; it says what the rows say and nothing about who the person is
       const para = await page.evaluate(() => portraitText());
-      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "הוראת קבע", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "התכתבות אישית על משכנתא", "מעבר מגורים", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
+      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
       assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
+      assert(!/הוראת קבע|מיילים על|סטרימינג/.test(para), "the dull or the descriptive in the paragraph: " + para);
       console.log("paragraph:", para);
       assert(!/נטפרי|netfree/i.test(await page.evaluate(() => JSON.stringify([S.result.groups, S.result.suppliers, S.result.unknown, S.result.ai_input]))), "a filtering provider reveals religious observance");
       assert.strictEqual(await page.locator("#rep-groups .group").count() > 3, true, "the report rows must stay under the paragraph");
@@ -278,7 +279,7 @@ async function run(browser, mode) {
     assert.ok(String(report.subscriptions.v).includes("saasco.io"), "recurring charges from an unknown sender: " + JSON.stringify(report.subscriptions) + " unknown:" + JSON.stringify(await page.evaluate(() => S.result.stats.by_class)));
     assert.ok(String(report.active_hours.v).includes(":00"), "active hours");
     assert.ok(/%$/.test(report.promo_share.v), "promotion share");
-    assert((await page.locator("#hero-tiles .tile").count()) >= 3, "the top of the report is empty");
+    assert.strictEqual(await page.locator("#hero-tiles .tile").count(), 2, "only the response time and activity stay on top");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
     assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
     const suppliers = await page.evaluate(() => S.result.suppliers);
@@ -335,7 +336,7 @@ async function run(browser, mode) {
     await page.uncheck(`${row("longest_supplier")} [data-show]`);
     assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
     // the AI sentences: only cleaned subjects went out, opinions are dropped, and each has its own V
-    await page.waitForFunction(() => document.querySelector("#rev-portrait .portrait-ai-text")?.textContent.includes("משכנתא"), null, { timeout: 120000 });
+    await page.waitForFunction(() => document.querySelector("#rev-portrait .portrait-top")?.textContent.includes("עבודה בהיקף חלקי"), null, { timeout: 120000 });
     assert.strictEqual(aiCalls.length, 1, "AI calls");
     for (const secret of [OWNER_HE, HH_NAME, ME, "123456789", "me@x.com", "partner@example.com"]) assert(!aiCalls[0].includes(secret), "leaked to AI: " + secret);
     assert(aiCalls[0].includes("נסח טאבו"), "subjects must reach the AI");

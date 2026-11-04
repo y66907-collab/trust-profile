@@ -174,10 +174,8 @@ textarea { min-height: 84px; resize: vertical; }
 .portrait-links:empty { display: none; }
 .portrait-links a { padding: 5px 12px; border: 1px solid var(--tq); border-radius: 999px; font-size: 14px; text-decoration: none; }
 .portrait-wait { color: var(--tq); font-weight: 700; margin: 6px 0 10px; }
-.portrait-more { margin-top: 12px; font-size: 14px; }
-.portrait-more summary { cursor: pointer; color: var(--tq); font-weight: 700; }
-.portrait-more[hidden] { display: none; }
-.portrait-ai-text { line-height: 1.7; margin: 6px 0 10px; }
+.p-line p { margin: 0 0 4px; }
+.p-line p:last-child { margin-bottom: 0; }
 @media (max-width: 480px) { .p-line { grid-template-columns: 1fr; gap: 2px; } }
 
 /* the numbers people came for */
