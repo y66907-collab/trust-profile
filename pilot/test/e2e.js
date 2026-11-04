@@ -68,7 +68,7 @@ const enc = (s) => "=?UTF-8?B?" + Buffer.from(s).toString("base64") + "?=";
 // the part of Gmail's search language the page uses
 function matches(x, q) {
   const subj = x.subject.toLowerCase();
-  for (const [, field, val] of q.matchAll(/(from|to|subject):("[^"]*"|\([^)]*\)|\S+)/g)) {
+  for (const [, field, val] of q.matchAll(/(?<!-)(from|to|subject):("[^"]*"|\([^)]*\)|\S+)/g)) {
     const v = val.replace(/^["(]|[")]$/g, "").toLowerCase();
     if (field === "from" && !x.from.toLowerCase().includes(v)) return false;
     if (field === "to" && !x.to.toLowerCase().includes(v)) return false;
@@ -194,6 +194,12 @@ async function run(browser, mode) {
   const shot = (n) => page.screenshot({ path: `${SHOTS}/${mode}-${n}.png`, fullPage: true });
   await page.goto("https://site.test/index.html");
   await shot("1-welcome");
+
+  // Gmail matches whole words: a Hebrew subject search must also ask for the word with its prefixes
+  const widened = await page.evaluate(() => [widenSubjects('subject:"הוצאה לפועל"'), widenSubjects("subject:(רבעוני OR invoice) from:x.com"), widenSubjects("subject:BDI")]);
+  assert(widened[0].includes('"בהוצאה לפועל"') && widened[0].includes('"הוצאה לפועל"'), "a phrase keeps its quotes and gets prefixes: " + widened[0]);
+  assert(widened[1].includes("הרבעוני") && widened[1].includes(" OR invoice)") && widened[1].endsWith(" from:x.com"), "a list widens only its Hebrew words: " + widened[1]);
+  assert.strictEqual(widened[2], "subject:(BDI)", "an English word stays as it is");
 
   // the purpose stays out of everything a participant can read, on the page and in the engine's rows
   const FORBIDDEN = /משכיר|שכירת|שכר דירה|דירה|פרופיל/;
@@ -337,8 +343,11 @@ async function run(browser, mode) {
     assert(!(await page.textContent("#rev-groups")).includes(secret), "a blacked-out value is still on the page");
     // the AI sentences: only cleaned subjects went out, opinions are dropped, and each has its own V
     await page.waitForFunction(() => document.querySelector("#rev-portrait .portrait-top")?.textContent.includes("עבודה בהיקף חלקי"), null, { timeout: 120000 });
-    assert.strictEqual(aiCalls.length, 1, "AI calls");
-    for (const secret of [OWNER_HE, HH_NAME, ME, "123456789", "me@x.com", "partner@example.com"]) assert(!aiCalls[0].includes(secret), "leaked to AI: " + secret);
+    await page.evaluate(() => S.background); // the second, deeper reading runs after the scan
+    assert.strictEqual(aiCalls.length, 2, "AI calls: the report's first reading and the deep one");
+    assert(!JSON.parse(aiCalls[0]).deep && JSON.parse(aiCalls[1]).deep === true, "only the second reading is deep");
+    assert.strictEqual(await page.evaluate(() => S.result.groups.filter((g) => g.title === AI_SUMMARY).length), 1, "the deep reading replaces the conclusions, not adds to them");
+    for (const secret of [OWNER_HE, HH_NAME, ME, "123456789", "me@x.com", "partner@example.com"]) assert(!aiCalls.join(" ").includes(secret), "leaked to AI: " + secret);
     assert(aiCalls[0].includes("נסח טאבו"), "subjects must reach the AI");
     assert(!/[0-9]/.test(JSON.stringify(JSON.parse(aiCalls[0]).items.filter((x) => x[0]).map((x) => x[2]))), "digits in a subject sent to AI");
     // the top of the report: conclusions by topic, the workplace, and real links
@@ -350,8 +359,8 @@ async function run(browser, mode) {
     assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
     assert.strictEqual(employerSearches.length, 1, "employer searches");
     assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
-    assert.strictEqual(await page.evaluate(() => hasAllWords("Yudit Shamni‏ - ‏Data Engineer", "Yudit Shamni")), true, "direction marks in a title");
-    assert(!/maccabi|friend@/.test(aiCalls[0]), "an excluded or personal sender went to AI");
+    assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
+    assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
     assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
     assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
     // blacking out a row takes the conclusion built on it, so it can't come back through the AI

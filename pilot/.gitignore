@@ -6,3 +6,8 @@ test/node_modules/
 *.xlsx
 imtrustme-feedback-*.json
 feedback-*.json
+# what a live-lab round collects stays out too
+test/*.log
+test/payload*.json
+test/report*.json
+test/trace*.json

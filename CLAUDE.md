@@ -15,7 +15,7 @@ Code, identifiers, commit messages and code comments stay in English.
 ## Layout
 - `pilot/site/` — the page, published to the `gh-pages` branch. `engine/` is the Python engine, run in Pyodide.
 - `pilot/tools/` — the feedback Apps Script and feedback merging.
-- `pilot/test/` — e2e test with Google, Gmail and sending mocked.
+- `pilot/test/` — e2e test with Google, Gmail and sending mocked. `live-lab.js` runs development rounds on your own mailbox (see the README); nothing from a real mailbox ever enters the repo, which is public.
 - `pilot/README.md` — full explanation, setup and publishing.
 
 ## Run
