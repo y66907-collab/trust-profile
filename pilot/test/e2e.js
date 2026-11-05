@@ -57,11 +57,26 @@ function fixture() {
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
   for (let m = 0; m < 3; m++) add(100 + 30 * m, "billing@sender.netfree.link", "החשבונית החודשית שלך");
   add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
+  // two CVs went out: the newer one is a candidate's, passed on, and the older one is the owner's own
+  add(4, "", "מסמך מצורף", true); last().file = "cv-candidate.docx";
+  last().doc = ["רון לוי", "ניסיון תעסוקתי", "2021 - היום | מנהל מוצר", "השכלה", "2015 - 2018 תואר ראשון"];
+  add(12, "", "הקובץ שביקשת", true); last().file = "Dana_Cohen_CV.docx";
+  last().doc = ["Dana Kohen", "דנה כהן | מפתחת", "ניסיון תעסוקתי", "2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "השכלה", "2022 - היום לימודי תעודה", "כישורים"];
   // a mailbox in weekly use: more mails sent than weeks in the period
   for (let d = 0; d < 200; d++) add(5 * d + 1, "", "עדכון", true);
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
+// A Word file with these paragraphs: a zip with one deflated entry, the way Word stores its document
+function docx(lines) {
+  const xml = Buffer.from(`<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${lines.map((l) => `<w:p><w:r><w:t>${l}</w:t></w:r></w:p>`).join("")}</w:body></w:document>`);
+  const name = Buffer.from("word/document.xml"), packed = require("zlib").deflateRawSync(xml);
+  const local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(xml.length, 22); local.writeUInt16LE(name.length, 26);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(8, 10); central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(xml.length, 24); central.writeUInt16LE(name.length, 28);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(30 + name.length + packed.length, 16);
+  return Buffer.concat([local, name, packed, central, name, end]);
+}
 const rowsFile = path.join(__dirname, "rows.json");
 const rows = fs.existsSync(rowsFile) ? JSON.parse(fs.readFileSync(rowsFile, "utf8")) : fixture();
 const byId = new Map(rows.map((r) => [r.id, r]));
@@ -70,10 +85,12 @@ const enc = (s) => "=?UTF-8?B?" + Buffer.from(s).toString("base64") + "?=";
 // the part of Gmail's search language the page uses
 function matches(x, q) {
   const subj = x.subject.toLowerCase();
-  for (const [, field, val] of q.matchAll(/(?<!-)(from|to|subject):("[^"]*"|\([^)]*\)|\S+)/g)) {
+  if (q.includes("has:attachment") && !x.file && !x.pdf) return false;
+  for (const [, field, val] of q.matchAll(/(?<!-)(from|to|subject|filename):("[^"]*"|\([^)]*\)|\S+)/g)) {
     const v = val.replace(/^["(]|[")]$/g, "").toLowerCase();
     if (field === "from" && !x.from.toLowerCase().includes(v)) return false;
     if (field === "to" && !x.to.toLowerCase().includes(v)) return false;
+    if (field === "filename" && !(x.file || "").toLowerCase().includes(v)) return false;
     if (field === "subject" && !v.split(" or ").some((w) => subj.includes(w.trim().replace(/"/g, "")))) return false;
   }
   return !q.includes("in:sent") || x.sent;
@@ -180,7 +197,10 @@ async function run(browser, mode) {
       const all = sorted.map((x) => ({ id: x.id, threadId: x.thread })).concat(label || q ? [] : old);
       return json({ messages: all.slice(start, start + 500), nextPageToken: start + 500 < all.length ? String(start + 500) : undefined });
     }
-    if (u.pathname.includes("/attachments/")) return json({ data: Buffer.from(TEST_PDF).toString("base64url") });
+    if (u.pathname.includes("/attachments/")) {
+      const of = byId.get(u.pathname.split("/").slice(-3)[0]);
+      return json({ data: (of?.doc ? docx(of.doc) : Buffer.from(TEST_PDF)).toString("base64url") });
+    }
     const id = u.pathname.split("/").pop();
     const x = byId.get(id);
     if (u.searchParams.get("format") === "full") {
@@ -191,6 +211,7 @@ async function run(browser, mode) {
       if (x.body) parts.push({ mimeType: "text/plain", body: { data: b64(x.body) } });
       if (x.html) parts.push({ mimeType: "text/html", body: { data: b64(x.html) } });
       if (x.pdf) parts.push({ mimeType: "application/pdf", filename: "a.pdf", body: { attachmentId: "att1", size: TEST_PDF.length } });
+      if (x.file) parts.push({ mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename: x.file, body: { attachmentId: "att2", size: 2000 } });
       return json({ id, threadId: x.thread, labelIds: ["INBOX"], payload: { mimeType: "multipart/mixed", headers: [{ name: "From", value: x.from || ME }], parts } });
     }
     if (x.promo) promoRead++;
@@ -288,6 +309,10 @@ async function run(browser, mode) {
     assert.strictEqual(report.platform_linkedin.link, "https://www.linkedin.com/in/test-owner", "own profile link");
     assert.strictEqual(await page.locator('#rep-groups a[href="https://www.linkedin.com/in/test-owner"]').count(), 1, "the link is not on the page");
     assert.strictEqual(await page.evaluate(() => S.run.pdf_read), 1, "the PDF was not read");
+    // the owner's own CV, and not the newer one passed on for someone else. Only the year of the job still held is kept
+    assert.strictEqual(await page.evaluate(() => S.run.cv_files), 2, "both Word files were opened");
+    assert.strictEqual(report.cv_current.v, "מאז 2019", "the current job from the owner's own CV: " + JSON.stringify(report.cv_current));
+    assert(!/רון לוי|מנהל מוצר|חברה אחת|אנליסטית/.test(all), "text of a CV reached the report");
     // the web and registries: only the participant's own name goes out, and a court page never comes back
     if (mode === "full") {
       assert.strictEqual(searches.length, 1, "web search calls");
