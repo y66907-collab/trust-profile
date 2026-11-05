@@ -162,6 +162,27 @@ async function main() {
   const browserEngine = await adminJson("/admin/engine-result");
   assert.deepStrictEqual(JSON.parse(rerun.stdout).groups, browserEngine.groups, "python and pyodide agree");
 
+  // a work address names the workplace while its domain still sends mail, and stops naming it once the domain went quiet
+  const employerWith = (daysAgo) => {
+    const p = JSON.parse(payload);
+    const ts = Date.now() - daysAgo * 864e5;
+    for (let i = 0; i < 3; i++) {
+      const id = (BigInt(ts - i * 31 * 864e5) << 20n).toString(16);
+      p.rows.push({ thread: id, id, ts: ts - i * 31 * 864e5, from: "x@workplace-example.co.il", to: "", subject: "", sent: false });
+    }
+    p.work_address = { domain: "workplace-example.co.il", mails: 1 };
+    const out = spawnSync("python", [path.join(__dirname, "engine_rerun.py")], { input: JSON.stringify(p), encoding: "utf8", maxBuffer: 1 << 28 });
+    assert.equal(out.status, 0, out.stderr);
+    const result = JSON.parse(out.stdout);
+    return { row: result.groups.flatMap((g) => g.params).find((x) => x.key === "employer"), said: result.portrait.map((x) => x.text) };
+  };
+  const working = employerWith(20), left = employerWith(500);
+  assert.equal(working.row.v, "workplace-example.co.il", "the workplace from a work address");
+  assert.equal(working.row.n, 3);
+  assert(working.row.note.includes("כתובת על שמך"), "the row says what it rests on");
+  assert(working.said.includes("עבודה ב-workplace-example.co.il."), "the workplace in the summary: " + working.said);
+  assert.equal(left.row.v, null, "a former workplace is not the current one");
+
   // round 2: no click, nothing from Gmail
   assert.equal((await (await admin("/admin/round", "POST")).json()).round, 2);
   const second = await waitFor((s) => s.reports.includes("final") && s.trace.finished, "round 2");

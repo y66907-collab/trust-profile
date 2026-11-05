@@ -243,7 +243,14 @@ def run(payload_json: str) -> str:
         repeat = max(months, key=lambda d: len(months[d]), default=None)
         if repeat and len(months[repeat]) >= 2:
             employer = [m for m in msgs if m.domain == repeat]
-    pension = [m for m in readable if PENSION.search(m.subject)]
+    by_address = False
+    work_domain = (p.get("work_address") or {}).get("domain")
+    if not employer and work_domain:  # an address in the owner's own name at an organisation: that is where they work
+        at_work = [m for m in msgs if m.domain == work_domain or m.domain.endswith("." + work_domain)]
+        # an address kept from a former workplace goes quiet, so mail in the last year is what makes it the current one
+        if at_work and months_between(max(m.sent_at for m in at_work), p["today"]) <= 13:
+            employer, by_address = at_work, True
+    pension =[m for m in readable if PENSION.search(m.subject)]
 
     # ---- identity
     gate_he = {"own": "על שמך", "household": "על שם בן/בת הבית שהצהרת עליו/ה", "other": "על שם אחר",
@@ -320,7 +327,8 @@ def run(payload_json: str) -> str:
             ("בנק לפי מיילים", P(", ".join(bank_names) if banks else "לא זוהה", banks)),
         ]),
         ("עבודה והכנסה", [
-            ("מעסיק לפי מיילים", P(employer[0].org_he or employer[0].domain, employer) if employer else
+            ("מעסיק לפי מיילים", P(employer[0].org_he or (work_domain if by_address else employer[0].domain), employer,
+                                   note="כתובת על שמך אצל הארגון" if by_address else None) if employer else
              (P(", ".join(k for k, _ in slip_from.most_common(2)), slips, note="לפי שולח התלושים") if slips
               else NA("המעסיק לא מוכר עדיין למנוע"))),
             ("ותק לפי מיילים מהמעסיק", P(f"מ-{ym(min(m.sent_at for m in employer))}", employer) if employer
@@ -528,7 +536,7 @@ def run(payload_json: str) -> str:
     if has("מיילים על רכישת נכס"):
         say("מיילים על רכישת נכס", "מסמכים על רכישת נכס.")
     if (r := has("מעסיק לפי מיילים")) and "שולח" not in (r.get("note") or ""):  # the sender of the slips may be a payroll firm
-        say("מעסיק לפי מיילים", f"עבודה ב{r['v']}.")
+        say("מעסיק לפי מיילים", f"עבודה ב{'-' if re.match('[A-Za-z0-9]', str(r['v'])) else ''}{r['v']}.")
     if r := has("ותק לפי מיילים מהמעסיק"):
         say("ותק לפי מיילים מהמעסיק", f"עבודה שם {r['v'].replace('מ-', 'לפחות מ-', 1)}.")
     if r := has("היקף משרה"):

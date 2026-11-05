@@ -136,6 +136,14 @@ async function run(browser, mode) {
     }
     if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
       const asked = JSON.parse(r.request().postData()).queries;
+      if (asked.join(" ").includes("site:workplace-example.co.il")) {
+        return r.fulfill({ body: JSON.stringify({ ok: true, results: [
+          { title: "Workplace Example | LinkedIn", link: "https://il.linkedin.com/company/workplace?trk=x", snippet: "" },
+          { title: "Someone Else | LinkedIn", link: "https://il.linkedin.com/company/someone-else", snippet: "" },
+          { title: "בית", link: "https://www.workplace-example.co.il/he/about?x=1", snippet: "פיתוח מערכות מידע  לארגונים, מאז שנת 2010. ועוד משפט שנחתך באמצ..." },
+          { title: "אתר אחר", link: "https://www.other-example.co.il/workplace-example.co.il", snippet: "לא האתר" },
+        ] }), contentType: "application/json", headers });
+      }
       if (asked.join(" ").includes("חברת דוגמה")) {
         employerSearches.push(asked);
         return r.fulfill({ body: JSON.stringify({ ok: true, results: [
@@ -253,6 +261,21 @@ async function run(browser, mode) {
   assert.strictEqual(run.reads, gets - 1, "reads count"); // one rate-limit hit is retried
   assert(gets < inScope / 2, `opened ${gets} of ${inScope}: the point is not to open each mail`);
   const report = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g) => g.params).map((p) => [p.key, p])));
+  // a work address: the owner's own name, in any spelling, in front of an organisation's domain
+  const names = await page.evaluate(() => {
+    const own = ownNames({ name_he: "דנה כהן", name_en: null });
+    const is = (local, owner) => isOwnName(local, owner ? ownNames(owner) : own);
+    const row = (from, extra) => ({ from, to: "me@gmail.com", sent: false, real: true, ...extra });
+    const rows = [row("dana.cohen@workplace-example.co.il"), row("x@workplace-example.co.il", { real: false }), row("avi.cohen@family-example.co.il"),
+      row("dana.cohen@gmail.com"), row("dana.cohen@campus-example.ac.il"), row("hr@acme-example.com"),
+      { from: "me@gmail.com", to: "cohen_dana2@workplace-example.co.il", sent: true, real: true }];
+    return { yes: ["dana.cohen", "cohen.dana", "danacohen", "Dana_Kohen7", "דנה.כהן"].filter((x) => !is(x)),
+      no: ["dcohen", "avi.cohen", "dana", "cohen", "dana.levi", "info"].filter((x) => is(x)),
+      spellings: [["יעקב לוי", "yaakov.levy"], ["יצחק שוורץ", "itzhak.schwartz"], ["מיכל וייס", "michal.weiss"], ["חיים פרידמן", "chaim.friedman"]].filter(([he, en]) => !is(en, { name_he: he })).map((x) => x[1]),
+      short: is("al.al", { name_he: "על על" }),
+      work: workAddress(rows, { name_he: "דנה כהן" }, "me@gmail.com"), none: workAddress(rows.slice(1, 6), { name_he: "דנה כהן" }, "me@gmail.com") };
+  });
+  assert.deepStrictEqual(names, { yes: [], no: [], spellings: [], short: false, work: { domain: "workplace-example.co.il", mails: 2 }, none: null }, "own name in an address");
   if (!fs.existsSync(rowsFile)) {
     assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
     assert.strictEqual(typeof report.credit_report.v !== "undefined", true, "no credit report row");
@@ -379,6 +402,12 @@ async function run(browser, mode) {
     assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
     assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
     assert.strictEqual(employerSearches.length, 1, "employer searches");
+    // a workplace known only by its domain: its own site and its own words, and no other page that merely mentions it
+    const byDomain = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("workplace-example.co.il"); const got = S.employer; S.employer = kept; return got; });
+    const about = "פיתוח מערכות מידע לארגונים, מאז שנת 2010";
+    assert.deepStrictEqual(byDomain, { name: "Workplace Example", lead: about, snippet: about, note: "מחיפוש ברשת", links: [
+      { text: "האתר של Workplace Example", url: "https://www.workplace-example.co.il" },
+      { text: "Workplace Example ב-LinkedIn", url: "https://il.linkedin.com/company/workplace" }] }, "the workplace from its domain");
     assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
     assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
