@@ -535,6 +535,11 @@ def run(payload_json: str) -> str:
         fixed(alerts, "לא נצפו התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
     if has("חיסכון פנסיוני פעיל"):
         fixed("חיסכון פנסיוני פעיל", "קיים חיסכון פנסיוני פעיל.")
+    # A page that names the person together with their city or workplace is about them, so it is said as it is. One that
+    # carries the name alone may be about someone else, and stays below with that said
+    tied_mentions = [m for m in out.get("mentions") or [] if m.get("tied")][:2]
+    for m in tied_mentions:
+        fixed("אזכורים ברשת", f"אזכור ברשת: {m['text']}.", ai=False)
 
     if r := has("עיר מגורים לפי חשבונות"):
         say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
@@ -569,7 +574,7 @@ def run(payload_json: str) -> str:
         if r.get("link"):
             say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת", url=r["link"])
     for m in out.get("mentions") or []:
-        if re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
+        if m not in tied_mentions and re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
             say("אזכורים ברשת", f"אזכור ברשת, לפי השם בלבד: {m['text']}.")
     if r := has("רישיונות במאגרים ציבוריים"):
         say("רישיונות במאגרים ציבוריים", f"במאגרים הציבוריים, לפי השם בלבד: {r['v']}.")
