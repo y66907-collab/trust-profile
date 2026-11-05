@@ -60,7 +60,7 @@ BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
               "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
          "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
-         "היקף משרה": "job_scope", "משרה נוכחית לפי קורות חיים": "cv_current", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
+         "היקף משרה": "job_scope", "משרה נוכחית לפי קורות חיים": "cv_current", "קורות חיים ששלחת": "cv_sent", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
          "מיילים ששלחת על חוזים": "contracts_sent", "מיילים על מעבר מגורים": "moving", "מיילים על רכישת נכס": "property_docs",
          "אזכורים ברשת": "web_mentions", "רישיונות במאגרים ציבוריים": "licenses", "חברות על השם שלך": "companies_registry", "מיילים על הזמנות ומשלוחים": "orders",
                 "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
@@ -452,9 +452,12 @@ def run(payload_json: str) -> str:
     work_rows = next(rows for t, rows in groups if t == "עבודה והכנסה")
     if ro.get("job_scope"):
         work_rows.append(("היקף משרה", fact(f"{ro['job_scope']['pct']}%", ro["job_scope"]["mails"], note="מתוך תלושים שנקראו")))
-    if ro.get("cv"):  # only the year: the file itself never reaches the engine
-        work_rows.append(("משרה נוכחית לפי קורות חיים", fact(f"מאז {ro['cv']['current_since']}", 1,
-                                                          note=f"קורות חיים שנשלחו ב-{ym(ro['cv']['sent'] + '-01')}")))
+    if ro.get("cv"):  # a month and a year: the file itself never reaches the engine
+        cv_sent = ym(ro["cv"]["sent"] + "-01")
+        work_rows.append(("קורות חיים ששלחת", fact(f"ב-{cv_sent}", 1)))
+        if ro["cv"].get("current_since"):
+            work_rows.append(("משרה נוכחית לפי קורות חיים", fact(f"מאז {ro['cv']['current_since']}", 1,
+                                                              note=f"קורות חיים שנשלחו ב-{cv_sent}")))
     two_years_ago = f"{int(today[:4]) - 2}{today[4:]}"
     academic = Counter(m.domain for m in readable if m.direction == "in" and m.domain.endswith(".ac.il") and m.sent_at >= two_years_ago)
     if sum(academic.values()) >= 3:

@@ -444,6 +444,21 @@ const CV_NOW = "היום|כיום|עכשיו|הווה|today|present|current|now"
 const CV_RANGE = new RegExp(`(?:\\d{1,2}[./])?((?:19|20)\\d\\d)\\s*(?:[-–—]|עד|to)\\s*(?:\\d{1,2}[./])?((?:19|20)\\d\\d|${CV_NOW})`, "i");
 const CV_SECTIONS = [["work", /ניסיון|נסיון|תעסוקה|קריירה|experience|employment|career/i], ["study", /השכלה|לימודים|education|academic/i],
   ["other", /מיומנויות|כישורים|skills|שפות|languages|התנדבות|volunteer|צבא|שירות לאומי|military|summary|תקציר|פרויקטים|projects|tools/i]];
+// The work and study parts of a CV, for the AI and only with the person's tick. Nothing that names or reaches the person
+// comes along: the top of the file is never taken, and a line with a contact detail, a long number or family matters is dropped
+const CV_PRIVATE = /@|https?:|www\.|\d{5,}|\d{2,3}[- ]\d{3}[- ]?\d{4}|ת\.?ז\.?|תעודת זהות|תאריך לידה|יליד|נשוי|נשואה|רווק|גרוש|ילדים|אמא ל|אבא ל|born|married|רחוב|רח'|כתובת|address/i;
+function cvLines(text, names) {
+  const out = [];
+  let section = null;
+  for (const line of text.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean)) {
+    const heading = line.length < 45 && !CV_RANGE.test(line) && CV_SECTIONS.find(([, rx]) => rx.test(line));
+    if (heading) { section = heading[0]; continue; }
+    if ((section !== "work" && section !== "study") || CV_PRIVATE.test(line) || ownNameIn(line, names)) continue;
+    out.push(line.slice(0, 165));
+    if (out.length >= 40) break;
+  }
+  return out;
+}
 function cvCurrentSince(text) {
   let section = null, since = null;
   const thisYear = new Date().getFullYear();
@@ -532,7 +547,8 @@ async function readRelevant(search, pool, drop, senders) {
   if (employerN >= 2) out.employer = { name: employer, mails: employerN };
 
   // The person's own CV: the newest file they sent that opens with their own name. One they passed on for someone else
-  // fails that check. Only two things leave this block: since when the current job, and when the file was sent
+  // fails that check. The engine gets two things: since when the current job, and when the file was sent. With the AI
+  // box ticked, the work and study lines are kept for the AI as well
   const names = ownNames(S.owner), cvIds = new Set();
   await pool(CV_QUERIES, 4, async (q) => (await idsFor(q, 6)).forEach((id) => cvIds.add(id)));
   let cvBudget = 8;
@@ -547,8 +563,8 @@ async function readRelevant(search, pool, drop, senders) {
         const text = readable(/\.docx$/i.test(p.filename) ? await docxText(bytes) : await pdfLines(bytes));
         out.cv_files++;
         if ((text.match(CV_WORDS) || []).length < 2 || !ownNameIn(text.slice(0, 600), names)) continue;
-        const since = cvCurrentSince(text);
-        if (since) out.cv = { current_since: since, sent: when(id).slice(0, 7) };
+        out.cv = { current_since: cvCurrentSince(text), sent: when(id).slice(0, 7) };
+        S.cvLines = $("#ai-ok").checked ? cvLines(text, names) : []; // kept apart from what the engine gets, and only for the AI
       } catch (e) { out.pdf_failed++; }
     }
   }
@@ -907,6 +923,7 @@ async function readMailbox() {
     stage("rest", "done");
     stage("write", "done");
     bar(1);
+    S.cvLines = []; // the AI has had its say, so the lines are not kept
     renderReport();
     go("s-report");
     const el = $("#bg-status");
@@ -1083,13 +1100,15 @@ const AI_TOPICS = [
   'subject:(התנדבות OR מילואים OR הרצאה OR כנס OR conference)',
   'in:sent subject:(חוזה OR הסכם OR משכנתא OR "מעבר דירה" OR ביטוח)',
 ];
-const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה", FACTS_TOPIC = "עובדות";
+const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה", FACTS_TOPIC = "עובדות", CV_ROW = "קורות חיים ששלחת";
 const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
 async function askAi(r, deep = false) {
   if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
   // Facts from the report come first, so a sentence built on one can be taken down when its row is blacked out
   const facts = (r.ai_facts || []).map((x) => ({ label: x.label, line: ["", "עובדה מהדוח", x.text.slice(0, 190)] }));
   if (S.employer?.snippet) facts.push({ label: null, line: ["", "על מקום העבודה", `${S.employer.name}: ${S.employer.snippet}`.slice(0, 190)] });
+  // the person's own words about their work and studies. Tied to the CV row, so blacking it out takes these conclusions too
+  (S.cvLines || []).forEach((l) => facts.push({ label: CV_ROW, line: ["", "עובדה מהדוח", `מתוך קורות חיים: ${l}`.slice(0, 190)] }));
   const items = [...facts.map((x) => x.line), ...r.ai_input.map((x) => [x.d, x.o, x.s])];
   const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(deep ? 300000 : 90000),
     body: JSON.stringify({ kind: "imtrustme-ai", items, ...(deep ? { deep: true } : {}) }) }).then((x) => x.json());
