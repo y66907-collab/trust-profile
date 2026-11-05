@@ -316,6 +316,8 @@ const READ_TOPICS = {
   work: { q: 'subject:("תלוש שכר" OR "תלוש משכורת" OR "אישור העסקה" OR "טופס 106" OR payslip)', max: 15, pdf: true },
   flights: { q: 'subject:(טיסה OR "boarding pass" OR itinerary OR "כרטיס טיסה") -subject:(פרסומת OR מבצע OR הגרלה)', max: 25, pdf: false },
 };
+// A CV the person sent themselves. Each is its own search, since a file name and a subject cannot share one
+const CV_QUERIES = ["filename:cv", "filename:resume", "filename:קורות", "filename:קוח", 'subject:"קורות חיים"', "subject:cv", "subject:resume"].map((q) => `in:sent has:attachment ${q}`);
 const SOCIAL = [
   ["LinkedIn", "from:linkedin.com", /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/comm\/in\/([A-Za-z0-9%_-]+)\?[^"'\s]*trk=[^"'\s]*header-0-profile_glimmer/, (u) => `https://www.linkedin.com/in/${u}`],
   ["Instagram", "from:instagram.com", /instagram\.com\/_n\/user\?[^"']*?username=([A-Za-z0-9._]+)[^"']*?click_source=(?:header|footer)_profile_pic/, (u) => `https://www.instagram.com/${u}`],
@@ -374,8 +376,90 @@ async function pdfText(data) {
   return text;
 }
 
+// ---------------------------------------------------------------- reading a CV
+// A Word file is a zip: only the document itself and its page headers are unpacked, with what the browser already has
+const fileBytes = (data) => Uint8Array.from(atob(data.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function inflate(bytes) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+}
+async function docxText(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = bytes.length - 22;
+  while (end >= 0 && v.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error("not a zip");
+  let p = v.getUint32(end + 16, true);
+  const parts = [];
+  for (let i = 0; i < v.getUint16(end + 10, true); i++) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true), nameLen = v.getUint16(p + 28, true), at = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    if (/^word\/(document|header\d*)\.xml$/.test(name)) {
+      const start = at + 30 + v.getUint16(at + 26, true) + v.getUint16(at + 28, true);
+      const raw = bytes.subarray(start, start + size);
+      const xml = new DOMParser().parseFromString(new TextDecoder().decode(method === 8 ? await inflate(raw) : raw), "application/xml");
+      const lines = [...xml.getElementsByTagName("w:p")].map((x) => [...x.getElementsByTagName("w:t")].map((t) => t.textContent).join("")).filter((l) => l.trim());
+      parts[name === "word/document.xml" ? "push" : "unshift"](lines.join("\n")); // the page header first: a name often sits there
+    }
+    p += 46 + nameLen + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
+  }
+  return parts.join("\n");
+}
+// A PDF as lines: the pieces of one line share a height on the page
+async function pdfLines(bytes) {
+  await loadPdf();
+  const doc = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  const out = [];
+  for (let i = 1; i <= Math.min(doc.numPages, 6); i++) {
+    const byHeight = new Map();
+    for (const it of (await (await doc.getPage(i)).getTextContent()).items) {
+      if (!it.str.trim()) continue;
+      const y = Math.round(it.transform[5] / 3);
+      if (!byHeight.has(y)) byHeight.set(y, []);
+      byHeight.get(y).push(it);
+    }
+    for (const y of [...byHeight.keys()].sort((a, b) => b - a)) {
+      // Hebrew runs from the right, so the pieces of a Hebrew line are taken from the right
+      const row = byHeight.get(y), rtl = row.some((x) => /[א-ת]/.test(x.str));
+      out.push(row.sort((a, b) => (rtl ? b.transform[4] - a.transform[4] : a.transform[4] - b.transform[4])).map((x) => x.str).join(" ").replace(/\s+/g, " ").trim());
+    }
+  }
+  await doc.destroy();
+  return out.join("\n");
+}
+const CV_WORDS = /ניסיון|נסיון|השכלה|תעסוקה|לימודים|כישורים|מיומנויות|experience|education|employment|skills/gi;
+// A Hebrew PDF may keep each word backwards: the reading with more known words is the right one
+function readable(text) {
+  const flipped = text.split("\n").map((l) => l.split(/(\s+)/).map((w) => (/[א-ת]/.test(w) ? [...w].reverse().join("") : w)).join("")).join("\n");
+  return (flipped.match(CV_WORDS) || []).length > (text.match(CV_WORDS) || []).length ? flipped : text;
+}
+// The owner's first and family name close together in a text: how a CV opens. One of the two alone is someone else
+function ownNameIn(text, names) {
+  const words = String(text || "").toLowerCase().match(/[a-zא-ת]+/g) || [];
+  const pairs = [...names.first].flatMap((f) => [...names.last].map((l) => [f, l])).filter(([f, l]) => f && l && f.length + l.length >= 4);
+  const keys = words.map((w) => (w.length >= 2 ? skeletons(w) : []));
+  return words.some((_, i) => pairs.some(([f, l]) => keys[i].includes(f) &&
+    [1, 2, 3].some((d) => [i - d, i + d].some((j) => keys[j]?.includes(l) || (keys[j] && keys[j + 1] && skeletons(words[j] + words[j + 1]).includes(l))))));
+}
+// Only years are taken from a CV. What a job was, and where, is written in too many ways for a rule to read it right
+const CV_NOW = "היום|כיום|עכשיו|הווה|today|present|current|now";
+const CV_RANGE = new RegExp(`(?:\\d{1,2}[./])?((?:19|20)\\d\\d)\\s*(?:[-–—]|עד|to)\\s*(?:\\d{1,2}[./])?((?:19|20)\\d\\d|${CV_NOW})`, "i");
+const CV_SECTIONS = [["work", /ניסיון|נסיון|תעסוקה|קריירה|experience|employment|career/i], ["study", /השכלה|לימודים|education|academic/i],
+  ["other", /מיומנויות|כישורים|skills|שפות|languages|התנדבות|volunteer|צבא|שירות לאומי|military|summary|תקציר|פרויקטים|projects|tools/i]];
+function cvCurrentSince(text) {
+  let section = null, since = null;
+  const thisYear = new Date().getFullYear();
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const range = CV_RANGE.exec(line);
+    const heading = line.length < 45 && !range && CV_SECTIONS.find(([, rx]) => rx.test(line));
+    if (heading) { section = heading[0]; continue; }
+    if (!range || /^\d/.test(range[2]) || (section && section !== "work")) continue; // a job that is still going on
+    const from = Number(range[1]);
+    if (from >= 1960 && from <= thisYear && (since === null || from > since)) since = from;
+  }
+  return since;
+}
+
 async function readRelevant(search, pool, drop, senders) {
-  const out = { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 };
+  const out = { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0, cv_files: 0 };
   const [rules, hashes] = await Promise.all(["rules", "excluded_hashes"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
   const hidden = new Set(hashes.sha256);
   const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -446,6 +530,28 @@ async function readRelevant(search, pool, drop, senders) {
   if (scope) out.job_scope = { pct: Number(scope), mails: scopeN };
   const [employer, employerN] = Object.entries(employers).sort((a, b) => b[1] - a[1])[0] || [];
   if (employerN >= 2) out.employer = { name: employer, mails: employerN };
+
+  // The person's own CV: the newest file they sent that opens with their own name. One they passed on for someone else
+  // fails that check. Only two things leave this block: since when the current job, and when the file was sent
+  const names = ownNames(S.owner), cvIds = new Set();
+  await pool(CV_QUERIES, 4, async (q) => (await idsFor(q, 6)).forEach((id) => cvIds.add(id)));
+  let cvBudget = 8;
+  for (const id of [...cvIds].sort((a, b) => idTime(b) - idTime(a))) {
+    if (out.cv || cvBudget <= 0) break;
+    const g = await fetchMail(id);
+    for (const p of g ? partsOf(g.payload) : []) {
+      if (out.cv || cvBudget <= 0 || !/\.(pdf|docx)$/i.test(p.filename || "") || !p.body?.attachmentId || p.body.size > 4e6) continue;
+      cvBudget--;
+      try {
+        const bytes = fileBytes((await gget(`${API}/messages/${g.id}/attachments/${p.body.attachmentId}`, READ_UNITS)).data);
+        const text = readable(/\.docx$/i.test(p.filename) ? await docxText(bytes) : await pdfLines(bytes));
+        out.cv_files++;
+        if ((text.match(CV_WORDS) || []).length < 2 || !ownNameIn(text.slice(0, 600), names)) continue;
+        const since = cvCurrentSince(text);
+        if (since) out.cv = { current_since: since, sent: when(id).slice(0, 7) };
+      } catch (e) { out.pdf_failed++; }
+    }
+  }
 
   const dests = {};
   await pool(await idsFor(READ_TOPICS.flights.q, READ_TOPICS.flights.max), 4, async (id) => {
@@ -719,7 +825,7 @@ async function readMailbox() {
   if ($("#ai-ok").checked) await pool(AI_TOPICS, 4, async (q) => { (await search(q)).slice(0, 25).forEach((m) => toOpen.add(m.id)); });
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
-  const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
+  const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0, cv_files: 0 }; });
   const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
@@ -744,7 +850,7 @@ async function readMailbox() {
   const first = await runEngine();
   S.run = { messages: first.counted, listed: total, skipped_promotions: skipped, reads, complete: false, mailbox_since,
             report_seconds: Math.round((performance.now() - t0) / 1000) };
-  Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed });
+  Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed, cv_files: readOut.cv_files });
   S.result = first.r;
   stage("engine", "done");
   // The report is shown once, when everything behind it is finished, so nothing changes under the reader's eyes.
