@@ -276,7 +276,7 @@ async function run(browser, mode) {
       assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
       // the paragraph is added above the report; it says what the rows say and nothing about who the person is
       const para = await page.evaluate(() => portraitText());
-      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
+      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "לא נצפו בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
       assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
       assert(!/הוראת קבע|מיילים על|סטרימינג/.test(para), "the dull or the descriptive in the paragraph: " + para);
       console.log("paragraph:", para);
@@ -297,8 +297,9 @@ async function run(browser, mode) {
     assert.strictEqual(await page.locator("#rep-hero, .tile").count(), 0, "the numbers card on top is gone; the mailbox gets one line in the summary");
     // the fixed facts that open the summary: one to a line, said either way, and silent where there is nothing to judge by
     const facts = await page.evaluate(() => factLines().map((l) => l.text));
-    assert.deepStrictEqual(facts, ["תיבת מייל פעילה.", "תשלום סדיר לספק אחד, חצי שנה ומעלה, ויש בתיבה אישורים על הוראות קבע.", "אין בתיבה בעיות תשלום מהותיות.",
-      "לא נפתחו מחלוקות: לא נשלחו מהתיבה ערעורים או תלונות.", "יש בתיבה הודעות על הליך משפטי, הוצאה לפועל או עיקול."], "the fixed facts");
+    assert.deepStrictEqual(facts, ["תיבת מייל פעילה.", "תשלום סדיר לספק אחד, חצי שנה ומעלה, ונצפו הוראות קבע.", "לא נצפו בעיות תשלום מהותיות.",
+      "לא נצפו מחלוקות, ערעורים או תלונות.", "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול."], "the fixed facts");
+    assert(!facts.slice(1).join(" ").includes("תיבה"), "a fixed fact names its source: " + facts);
     assert.strictEqual(await page.locator("#rep-portrait .p-line").first().locator("p").count(), facts.length, "each fixed fact gets its own line");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
     assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
@@ -369,7 +370,7 @@ async function run(browser, mode) {
     assert(top.includes("עבודה בהיקף חלקי") && top.includes("התאגדה ב-2005"), "the conclusions on top: " + top);
     // the mailbox line opens the conclusions, never goes to the AI, and goes down with the row it rests on
     assert(top.trim().startsWith("עובדות") && top.includes("תיבת מייל פעילה"), "the fixed facts on top: " + top);
-    assert(!/תיבת מייל|יש בתיבה הודעות על הליך|לא נפתחו מחלוקות/.test(aiCalls.join(" ")), "a line that is the person's own business went to the AI");
+    assert(!/תיבת מייל|נצפו הודעות על הליך|לא נצפו מחלוקות/.test(aiCalls.join(" ")), "a line that is the person's own business went to the AI");
     await page.uncheck(`${row("sent_per_week")} [data-show]`);
     assert(!(await page.textContent("#rev-portrait .portrait-top")).includes("תיבת מייל"), "the mailbox line outlived its row");
     await page.check(`${row("sent_per_week")} [data-show]`);
