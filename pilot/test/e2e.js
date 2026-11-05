@@ -57,6 +57,10 @@ function fixture() {
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
   for (let m = 0; m < 3; m++) add(100 + 30 * m, "billing@sender.netfree.link", "החשבונית החודשית שלך");
   add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
+  // job alerts: a mailing list, by its sender or by its subject. An answer to an application is neither
+  for (let m = 0; m < 3; m++) add(7 * m + 2, "jobs@drushim.co.il", "הצעות שנבחרו בשבילך");
+  add(9, "updates@board-example.com", "New jobs for you this week");
+  add(13, "no-reply@greenhouse-mail.io", "תודה על פנייתך לחברה");
   // two CVs went out: the newer one is a candidate's, passed on, and the older one is the owner's own
   add(4, "", "מסמך מצורף", true); last().file = "cv-candidate.docx";
   last().doc = ["רון לוי", "ניסיון תעסוקתי", "2021 - היום | מנהל מוצר", "השכלה", "2015 - 2018 תואר ראשון"];
@@ -447,6 +451,8 @@ async function run(browser, mode) {
     assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
     assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
+    assert(!/הצעות שנבחרו|New jobs for you/.test(aiCalls.join(" ")), "a job alert went to the AI");
+    assert(aiCalls.join(" ").includes("תודה על פנייתך"), "an answer to an application is not an alert");
     assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
     assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
     // blacking out a row takes the conclusion built on it, so it can't come back through the AI
