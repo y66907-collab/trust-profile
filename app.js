@@ -1037,8 +1037,9 @@ async function lookupByDomain(domain) {
   const hostOf = (h) => { try { return new URL(h.link).hostname.toLowerCase(); } catch { return ""; } };
   const site = hits.find((h) => /^https:\/\//.test(h.link || "") && (hostOf(h) === domain || hostOf(h).endsWith("." + domain)));
   const page = hits.find((h) => LINKEDIN_COMPANY.test(cleanUrl(h.link)) && nameWords(label).every((w) => nameWords(h.title).includes(w)));
-  // the name as the organisation writes it, when its own page gives one
-  const name = (page && String(page.title).split(/\s[|–-]\s/)[0].trim().slice(0, 40)) || domain;
+  // the name as the organisation writes it: from its LinkedIn page, or as its own site spells the word in its domain
+  const spelled = site && new RegExp(`(?<![\\w-])${label.replace(/[^a-z0-9]/gi, "\\$&")}(?![\\w-])`, "i").exec(`${site.title} ${site.snippet}`)?.[0];
+  const name = (page && String(page.title).split(/\s[|–-]\s/)[0].trim().slice(0, 40)) || spelled || domain;
   const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, page && { text: `${name} ב-LinkedIn`, url: cleanUrl(page.link) }].filter(Boolean);
   if (!links.length) return;
   // a search result is cut mid-sentence, so only the whole sentences are kept
