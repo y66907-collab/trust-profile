@@ -474,7 +474,8 @@ def run(payload_json: str) -> str:
         return label in every_row and every_row[label]["v"] is not None
 
     # ---- the facts that open the summary, one to a line and in a fixed order. Each says what is in the mailbox or is not,
-    # and where the mailbox has nothing to judge by, the line is left out: silence is not a finding
+    # and where the mailbox has nothing to judge by, the line is left out: silence is not a finding. The wording never names
+    # the mailbox as the source ("לא נצפו", not "אין בתיבה"): whoever reads the summary is not told where a fact came from
     # The mailbox itself: the person sends from it every week, and whose names the organisations use in it. It rests on
     # several rows, and blacking out any of them takes the line down. It carries first names, so it never goes to the AI
     sends_weekly = bool(ins.get("sent")) and ins["sent"] / ins["weeks"] >= 1
@@ -490,29 +491,29 @@ def run(payload_json: str) -> str:
     n_paying = (has(paying) or {}).get("v") or 0
     paid = (f"תשלומים סדירים ל-{n_paying} ספקים, חצי שנה ומעלה" if n_paying > 1
             else "תשלום סדיר לספק אחד, חצי שנה ומעלה" if n_paying else "")
-    fixed(paying, (", ו".join(x for x in (paid, "יש בתיבה אישורים על הוראות קבע" if has(orders) else "") if x)
-                   or "לא נמצאו בתיבה תשלומים קבועים או הוראות קבע") + ".", needs=[orders])
+    fixed(paying, (", ו".join(x for x in (paid, "נצפו הוראות קבע" if has(orders) else "") if x)
+                   or "לא נצפו תשלומים קבועים או הוראות קבע") + ".", needs=[orders])
     problems = "בעיות תשלום מהותיות בכל התקופה"
     if has(problems):
-        fixed(problems, "יש בתיבה בעיות תשלום מהותיות.")
+        fixed(problems, "נצפו בעיות תשלום מהותיות.")
     elif problems in every_row and n_paying:  # only with bills to judge by
-        fixed(problems, "אין בתיבה בעיות תשלום מהותיות.")
+        fixed(problems, "לא נצפו בעיות תשלום מהותיות.")
     # disputes and legal proceedings are the person's own business: said to them, never handed to the AI to build on
     disputes = "ערעורים ותלונות ששלחת"
     if has(disputes):
-        fixed(disputes, "נשלחו מהתיבה ערעורים או תלונות.", ai=False)
+        fixed(disputes, "נצפו ערעורים או תלונות.", ai=False)
     elif checked(disputes):
-        fixed(disputes, "לא נפתחו מחלוקות: לא נשלחו מהתיבה ערעורים או תלונות.", ai=False)
+        fixed(disputes, "לא נצפו מחלוקות, ערעורים או תלונות.", ai=False)
     legal = "הליך משפטי, הוצאה לפועל או עיקול"
     if has(legal):
-        fixed(legal, "יש בתיבה הודעות על הליך משפטי, הוצאה לפועל או עיקול.", ai=False)
+        fixed(legal, "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול.", ai=False)
     elif checked(legal):
-        fixed(legal, "אין בתיבה עיקול, הוצאה לפועל או הליך משפטי.", ai=False)
+        fixed(legal, "לא נצפו עיקול, הוצאה לפועל או הליך משפטי.", ai=False)
     alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
     if has(alerts):
-        fixed(alerts, "יש בתיבה התראות מהבנק.")
+        fixed(alerts, "נצפו התראות מהבנק.")
     elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
-        fixed(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
+        fixed(alerts, "לא נצפו התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
     if has("חיסכון פנסיוני פעיל"):
         fixed("חיסכון פנסיוני פעיל", "קיים חיסכון פנסיוני פעיל.")
 
