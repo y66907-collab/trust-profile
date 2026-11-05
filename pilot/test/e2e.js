@@ -61,7 +61,8 @@ function fixture() {
   add(4, "", "מסמך מצורף", true); last().file = "cv-candidate.docx";
   last().doc = ["רון לוי", "ניסיון תעסוקתי", "2021 - היום | מנהל מוצר", "השכלה", "2015 - 2018 תואר ראשון"];
   add(12, "", "הקובץ שביקשת", true); last().file = "Dana_Cohen_CV.docx";
-  last().doc = ["Dana Kohen", "דנה כהן | מפתחת", "ניסיון תעסוקתי", "2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "השכלה", "2022 - היום לימודי תעודה", "כישורים"];
+  last().doc = ["Dana Kohen", "דנה כהן | מפתחת", "ניסיון תעסוקתי", "2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "ממליצים: דנה כהן", "נייד 050-123-4567", "אתר www.dana-example.co.il",
+    "השכלה", "2022 - היום לימודי תעודה", "כישורים", "עבודת צוות"];
   // a mailbox in weekly use: more mails sent than weeks in the period
   for (let d = 0; d < 200; d++) add(5 * d + 1, "", "עדכון", true);
   return out;
@@ -313,6 +314,11 @@ async function run(browser, mode) {
     assert.strictEqual(await page.evaluate(() => S.run.cv_files), 2, "both Word files were opened");
     assert.strictEqual(report.cv_current.v, "מאז 2019", "the current job from the owner's own CV: " + JSON.stringify(report.cv_current));
     assert(!/רון לוי|מנהל מוצר|חברה אחת|אנליסטית/.test(all), "text of a CV reached the report");
+    assert.strictEqual(report.cv_sent.outcome, "found", "the row the CV conclusions hang on");
+    // with the box ticked the work and study lines go to the AI, and nothing that names or reaches the person. Without it, nothing
+    const cvSent = aiCalls.flatMap((c) => JSON.parse(c).items).filter((x) => x[2].startsWith("מתוך קורות חיים")).map((x) => x[2].slice(17));
+    if (mode === "full") assert.deepStrictEqual([...new Set(cvSent)], ["2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "2022 - היום לימודי תעודה"], "the CV lines for the AI");
+    else assert.deepStrictEqual([cvSent.length, await page.evaluate(() => S.cvLines.length)], [0, 0], "CV lines kept or sent without the box");
     // the web and registries: only the participant's own name goes out, and a court page never comes back
     if (mode === "full") {
       assert.strictEqual(searches.length, 1, "web search calls");
