@@ -548,7 +548,7 @@ async function readMailbox() {
   const t0 = performance.now();
   const rows = new Map();
   let reads = 0;
-  const show = () => {
+  let show = () => {
     const left = pending.size;
     stage("read", "now", `${fmtN(total - left)} / ${fmtN(total)}`);
     bar(0.08 + 0.82 * ((total - left) / (total || 1)));
@@ -686,27 +686,19 @@ async function readMailbox() {
   Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed });
   S.result = first.r;
   stage("engine", "done");
-  bar(1);
-  S.aiPending = $("#ai-ok").checked || $("#web-ok").checked;
-  renderReport();
-  go("s-report");
-  showBackground(total - pending.size, total);
+  // The report is shown once, when everything behind it is finished, so nothing changes under the reader's eyes.
+  // Until then this screen stays, with the rest of the work as its own stages
+  show = () => showBackground(total - pending.size, total);
+  show();
   S.enrich = (async () => {
     await lookupEmployer(first.r).catch((e) => console.warn("employer lookup stopped", e));
     await askAi(first.r).catch((e) => console.warn("AI paragraph stopped", e));
-    S.aiPending = false;
     attachEmployer(S.result);
     attachAi(S.result);
-    renderReport();
-    if (S.mode) {
-      S.checkList = [];
-      S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { if (!isPrivate() || p.private) S.checkList.push(`${gi}.${pi}`); }));
-      if (!isPrivate()) renderReview();
-    }
   })();
 
-  // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
-  // is left unaccounted for. The final run replaces the report, so nothing is sent from a result that was only partial
+  // everyone else: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail is left
+  // unaccounted for. The final run replaces the first result, so nothing is shown or sent from one that was only partial
   S.scanned = (async () => {
     try {
       const asked = new Set([...known, ...PERSONAL_DOMAINS]);
@@ -724,29 +716,40 @@ async function readMailbox() {
           showBackground(total - pending.size, total);
         }
       });
+      stage("rest", "done", fmtN(total));
+      stage("write", "now");
+      $("#eta").textContent = "עוד רגע";
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
       await S.enrich;
       applyFinal(last.r);
     } catch (e) {
-      console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
+      console.warn("background read stopped", e); // the first result stands; the feedback says the count is partial
       S.run.reads = reads;
+      await S.enrich;
     }
     S.run.read_seconds = Math.round((performance.now() - t0) / 1000);
     await revoke();
     rows.clear(); // the envelopes are not kept once the profile exists
     window.onbeforeunload = null;
-    showBackground();
   })();
-  S.background = S.scanned.then(deepenAi); // feedback waits for the scan, not for this
+  // The deeper conclusions are written from the whole mailbox, and only then does the report come up
+  S.background = S.scanned.then(deepenAi).finally(() => {
+    stage("rest", "done");
+    stage("write", "done");
+    bar(1);
+    renderReport();
+    go("s-report");
+    const el = $("#bg-status");
+    el.hidden = false;
+    el.textContent = "הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.";
+  });
 }
 
 function showBackground(done, total) {
-  const el = $("#bg-status");
-  el.hidden = false;
-  el.textContent = total === undefined
-    ? `הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.${S.reportChanged ? " הדוח התעדכן לפי כל השולחים, ותשובות על שורות שהשתנו נמחקו. כדאי לעבור עליהן שוב." : ""}`
-    : `ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). הדוח יכול עוד להתעדכן, ושום דבר לא יישלח לפני שזה נגמר.`;
+  stage("rest", "now", `${fmtN(done)} / ${fmtN(total)}`);
+  bar(0.08 + 0.82 * (done / (total || 1)));
+  $("#eta").textContent = "עוד כמה דקות";
 }
 
 // The final run replaces the report. Answers follow their row by its key, since rows can appear and move, and an answer
@@ -830,7 +833,6 @@ const valHtml = (p) => (p.links ? (p.lead ? `${esc(p.lead)}<br>` : "") + p.links
   ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
-const HERO = ["reply_time", "sent_per_week"];
 // ---------------------------------------------------------------- the workplace
 // Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
 const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
@@ -891,7 +893,7 @@ const AI_TOPICS = [
   'subject:(התנדבות OR מילואים OR הרצאה OR כנס OR conference)',
   'in:sent subject:(חוזה OR הסכם OR משכנתא OR "מעבר דירה" OR ביטוח)',
 ];
-const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה";
+const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה", FACTS_TOPIC = "עובדות";
 const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
 async function askAi(r, deep = false) {
   if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
@@ -958,7 +960,16 @@ function summaryLines() {
   const summary = visibleRows(AI_SUMMARY).map((p) => ({ topic: p.label, text: p.v }));
   const employer = rowsOf("מקום העבודה")[0];
   if (employer && !isHidden(employer.id) && employer.p.lead) summary.push({ topic: "עבודה", text: `${S.employer.name}: ${employer.p.lead}.` });
+  if (summary.length) summary.unshift(...factLines());
   return summary;
+}
+// The fixed facts are the engine's, one to a line, and open the summary whoever wrote the rest of it.
+// A line goes down with any row it rests on
+function factLines() {
+  const ids = {};
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
+  return (S.result.portrait || []).filter((x) => x.topic === FACTS_TOPIC && ![x.label, ...(x.needs || [])].some((l) => isHidden(ids[l])))
+    .map((x) => ({ topic: x.topic, text: x.text }));
 }
 
 // The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
@@ -967,7 +978,7 @@ function portraitLines(mainOnly) {
   S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
   const topics = new Map();
   for (const x of S.result.portrait || []) {
-    if (isHidden(ids[x.label]) || (mainOnly && !x.main)) continue;
+    if ([x.label, ...(x.needs || [])].some((l) => isHidden(ids[l])) || (mainOnly && !x.main)) continue;
     if (!topics.has(x.topic)) topics.set(x.topic, { plain: [], lists: new Map() });
     const t = topics.get(x.topic);
     if (!x.join) t.plain.push(x.text);
@@ -977,13 +988,13 @@ function portraitLines(mainOnly) {
 }
 const portraitText = () => portraitLines().map((l) => l.text).join(" ");
 function showPortrait(card) {
-  const summary = summaryLines(), lines = summary.length ? summary : portraitLines(true), links = topLinks();
+  const summary = summaryLines(), links = topLinks();
+  const lines = summary.length ? summary : [...factLines(), ...portraitLines(true).filter((l) => l.topic !== FACTS_TOPIC)];
   // One section: each topic once, with its points under it
   const topics = new Map();
   lines.forEach((l) => { if (!topics.has(l.topic)) topics.set(l.topic, []); topics.get(l.topic).push(l.text); });
-  const wait = S.aiPending ? `<p class="portrait-wait">עוד רגע: כותבים מסקנות ומחפשים קישורים…</p>` : "";
-  $(`${card}`).hidden = !lines.length && !wait;
-  $(`${card} .portrait-top`).innerHTML = wait + [...topics].map(([topic, texts]) => `<div class="p-line"><span>${esc(topic)}</span><div>${texts.map((t) => `<p>${esc(t)}</p>`).join("")}</div></div>`).join("");
+  $(`${card}`).hidden = !lines.length;
+  $(`${card} .portrait-top`).innerHTML = [...topics].map(([topic, texts]) => `<div class="p-line"><span>${esc(topic)}</span><div>${texts.map((t) => `<p>${esc(t)}</p>`).join("")}</div></div>`).join("");
   $(`${card} .portrait-links`).innerHTML = links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("");
 }
 function renderReport() {
@@ -996,11 +1007,6 @@ function renderReport() {
   const range = r.stats.date_range;
   $("#rep-meta").innerHTML = [["הופק", d], ["תקופה", range ? `<bdi dir="ltr">${esc(ymOf(range[0]))} – ${esc(ymOf(range[1]))}</bdi>` : "—"],
     ["מיילים בתקופה", fmtN(S.run.listed)]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
-  // The part people came for: the numbers about themselves, before the detail
-  const byKey = Object.fromEntries(r.groups.flatMap((g) => g.params).map((p) => [p.key, p]));
-  const tiles = HERO.map((k) => byKey[k]).filter((p) => p && p.outcome === "found");
-  $("#rep-hero").hidden = !tiles.length;
-  $("#hero-tiles").innerHTML = tiles.map((p) => `<div class="tile"><b>${esc(valText(p))}</b><span>${esc(p.label)}</span></div>`).join("");
   $("#rep-groups").innerHTML = r.groups.map((g) => `
     <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>
