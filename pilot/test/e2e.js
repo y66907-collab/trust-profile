@@ -154,6 +154,9 @@ async function run(browser, mode) {
     }
     if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
       const asked = JSON.parse(r.request().postData()).queries;
+      if (asked.join(" ").includes("site:solo-example.com")) {
+        return r.fulfill({ body: JSON.stringify({ ok: true, results: [{ title: "בית", link: "https://solo-example.com/", snippet: "Solo-Example בונה אתרים לעסקים." }] }), contentType: "application/json", headers });
+      }
       if (asked.join(" ").includes("site:workplace-example.co.il")) {
         return r.fulfill({ body: JSON.stringify({ ok: true, results: [
           { title: "Workplace Example | LinkedIn", link: "https://il.linkedin.com/company/workplace?trk=x", snippet: "" },
@@ -439,6 +442,8 @@ async function run(browser, mode) {
     assert.deepStrictEqual(byDomain, { name: "Workplace Example", lead: about, snippet: about, note: "מחיפוש ברשת", links: [
       { text: "האתר של Workplace Example", url: "https://www.workplace-example.co.il" },
       { text: "Workplace Example ב-LinkedIn", url: "https://il.linkedin.com/company/workplace" }] }, "the workplace from its domain");
+    const solo = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("solo-example.com"); const got = S.employer; S.employer = kept; return got; });
+    assert.deepStrictEqual([solo.name, solo.lead, solo.links.length], ["Solo-Example", "Solo-Example בונה אתרים לעסקים", 1], "the name as the site itself spells it");
     assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
     assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
