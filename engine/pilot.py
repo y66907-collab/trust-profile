@@ -273,13 +273,10 @@ def run(payload_json: str) -> str:
     for name, doms in PLATFORMS:
         ms = [m for m in msgs if m.direction == "in" and any(m.domain == d or m.domain.endswith("." + d) for d in doms)]
         link = (p.get("read_out") or {}).get("links", {}).get(name)
-        found_online = None if link else (p.get("outside") or {}).get("web_links", {}).get(name)
-        if len(ms) >= 5 or link or found_online:
+        if len(ms) >= 5 or link:  # only what the mailbox itself shows: a profile is never looked up by name
             row = P("חשבון קיים על הכתובת המחוברת", ms)
-            if link or found_online:
-                row["v"], row["link"] = (link or found_online).split("//")[1].removeprefix("www."), link or found_online
-            if found_online:
-                row["note"] = "נמצא בחיפוש לפי השם, ייתכן שזה מישהו אחר"
+            if link:
+                row["v"], row["link"] = link.split("//")[1].removeprefix("www."), link
             plat_rows.append((name, row))
     own_bills = [m for m in billing if m.holder == "owner"]
     hh_rels = [e for e in rel if e.holder == "household"]
@@ -572,7 +569,7 @@ def run(payload_json: str) -> str:
             say(label, label, join="תחומי עניין")
     for label, r in plat_rows:
         if r.get("link"):
-            say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת", url=r["link"])
+            say(label, label, join="חשבונות ברשת", url=r["link"])
     for m in out.get("mentions") or []:
         if m not in tied_mentions and re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
             say("אזכורים ברשת", f"אזכור ברשת, לפי השם בלבד: {m['text']}.")
