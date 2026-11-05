@@ -182,6 +182,7 @@ async function run(browser, mode) {
         { title: `${OWNER_HE} פסק דין`, link: "https://www.psakdin.co.il/Document/1", snippet: "" },
         { title: `${OWNER_HE}‏ | GitHub`, link: "https://github.com/test-owner-gh", snippet: "" },
         { title: `${OWNER_HE} אלופת ישראל בקרוספיט`, link: "https://sport-example.co.il/c", snippet: "" },
+        { title: `${OWNER_HE} פתחה סטודיו`, link: "https://local-example.co.il/b", snippet: "הסטודיו החדש בחיפה נפתח השבוע" },
         { title: "מישהו אחר לגמרי", link: "https://other-example.co.il/b", snippet: "" },
       ] }), contentType: "application/json", headers });
     }
@@ -359,7 +360,9 @@ async function run(browser, mode) {
     // the fixed facts that open the summary: one to a line, said either way, and silent where there is nothing to judge by
     const facts = await page.evaluate(() => factLines().map((l) => l.text));
     assert.deepStrictEqual(facts, ["תיבת מייל פעילה.", "תשלום סדיר לספק אחד, חצי שנה ומעלה, ונצפו הוראות קבע.", "לא נצפו בעיות תשלום מהותיות.",
-      "לא נצפו מחלוקות, ערעורים או תלונות.", "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול."], "the fixed facts");
+      "לא נצפו מחלוקות, ערעורים או תלונות.", "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול.",
+      // a page with the name and the city is about this person, and goes up as it is. One with the name alone does not
+      ...(mode === "full" ? [`אזכור ברשת: ${OWNER_HE} פתחה סטודיו (local-example.co.il).`] : [])], "the fixed facts");
     assert(!facts.slice(1).join(" ").includes("תיבה"), "a fixed fact names its source: " + facts);
     assert.strictEqual(await page.locator("#rep-portrait .p-line").first().locator("p").count(), facts.length, "each fixed fact gets its own line");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
