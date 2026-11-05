@@ -54,6 +54,7 @@ NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
 
 
 INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
+FACTS_TOPIC = "עובדות"  # the fixed lines that open the summary; app.js keeps them on top by this name
 # Findings for the person's own interest. Not asked row by row when the report isn't shared: nobody can confirm a median
 BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
@@ -461,8 +462,59 @@ def run(payload_json: str) -> str:
 
     portrait = []
 
-    def say(label, text, join=None, url=None):
-        portrait.append({"label": label, "text": text, **({"join": join} if join else {}), **({"url": url} if url else {})})
+    def say(label, text, join=None, url=None, needs=(), topic=None, ai=True):
+        portrait.append({"label": label, "text": text, **({"join": join} if join else {}), **({"url": url} if url else {}),
+                         **({"needs": list(needs)} if needs else {}), **({"topic": topic} if topic else {}),
+                         **({} if ai else {"ai": False})})
+
+    def fixed(label, text, needs=(), ai=True):
+        say(label, text, needs=needs, topic=FACTS_TOPIC, ai=ai)
+
+    def checked(label):  # the row exists and could be checked, so "nothing in the mailbox" may be said
+        return label in every_row and every_row[label]["v"] is not None
+
+    # ---- the facts that open the summary, one to a line and in a fixed order. Each says what is in the mailbox or is not,
+    # and where the mailbox has nothing to judge by, the line is left out: silence is not a finding
+    # The mailbox itself: the person sends from it every week, and whose names the organisations use in it. It rests on
+    # several rows, and blacking out any of them takes the line down. It carries first names, so it never goes to the AI
+    sends_weekly = bool(ins.get("sent")) and ins["sent"] / ins["weeks"] >= 1
+    shared = bool(hh) and (by_holder["household"] >= 3 or gate == "household")
+    if sends_weekly or shared:
+        rests_on = (["מיילים ששלחת בשבוע"] if sends_weekly else []) + (
+            ["למי גופים פונים בתיבה", "חשבונות על שם " + hh["name"], "חשבון ה-Gmail שחובר"] if shared else [])
+        both = f"משותפת ל{owner['name_he'].split()[0]} ול{hh['name'].split()[0]}" if shared else ""
+        fixed(rests_on[0], ", ".join(x for x in ("תיבת מייל פעילה" if sends_weekly else "תיבת מייל", both) if x) + ".",
+              needs=rests_on[1:], ai=False)
+    # regular payments and standing orders: always said, either way
+    paying, orders = "ספקים בתשלום קבוע (6 חודשים ומעלה)", "מיילים על הוראות קבע"
+    n_paying = (has(paying) or {}).get("v") or 0
+    paid = (f"תשלומים סדירים ל-{n_paying} ספקים, חצי שנה ומעלה" if n_paying > 1
+            else "תשלום סדיר לספק אחד, חצי שנה ומעלה" if n_paying else "")
+    fixed(paying, (", ו".join(x for x in (paid, "יש בתיבה אישורים על הוראות קבע" if has(orders) else "") if x)
+                   or "לא נמצאו בתיבה תשלומים קבועים או הוראות קבע") + ".", needs=[orders])
+    problems = "בעיות תשלום מהותיות בכל התקופה"
+    if has(problems):
+        fixed(problems, "יש בתיבה בעיות תשלום מהותיות.")
+    elif problems in every_row and n_paying:  # only with bills to judge by
+        fixed(problems, "אין בתיבה בעיות תשלום מהותיות.")
+    # disputes and legal proceedings are the person's own business: said to them, never handed to the AI to build on
+    disputes = "ערעורים ותלונות ששלחת"
+    if has(disputes):
+        fixed(disputes, "נשלחו מהתיבה ערעורים או תלונות.", ai=False)
+    elif checked(disputes):
+        fixed(disputes, "לא נפתחו מחלוקות: לא נשלחו מהתיבה ערעורים או תלונות.", ai=False)
+    legal = "הליך משפטי, הוצאה לפועל או עיקול"
+    if has(legal):
+        fixed(legal, "יש בתיבה הודעות על הליך משפטי, הוצאה לפועל או עיקול.", ai=False)
+    elif checked(legal):
+        fixed(legal, "אין בתיבה עיקול, הוצאה לפועל או הליך משפטי.", ai=False)
+    alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
+    if has(alerts):
+        fixed(alerts, "יש בתיבה התראות מהבנק.")
+    elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
+        fixed(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
+    if has("חיסכון פנסיוני פעיל"):
+        fixed("חיסכון פנסיוני פעיל", "קיים חיסכון פנסיוני פעיל.")
 
     if r := has("עיר מגורים לפי חשבונות"):
         say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
@@ -482,18 +534,6 @@ def run(payload_json: str) -> str:
         say("היקף משרה", f"היקף משרה של {r['v']}.")
     if r := has("מוסד אקדמי בתיבה"):
         say("מוסד אקדמי בתיבה", f"קשר בשנתיים האחרונות עם מוסד אקדמי: {r['v']}.")
-    if has("חיסכון פנסיוני פעיל"):
-        say("חיסכון פנסיוני פעיל", "חיסכון פנסיוני פעיל.")
-    alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
-    if has(alerts):
-        say(alerts, "יש בתיבה התראות מהבנק.")
-    elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
-        say(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
-    problems = "בעיות תשלום מהותיות בכל התקופה"
-    if has(problems):
-        say(problems, "יש בתיבה בעיות תשלום מהותיות.")
-    elif problems in every_row and has("ספקים בתשלום קבוע (6 חודשים ומעלה)"):  # only with bills to judge by
-        say(problems, "אין בתיבה בעיות תשלום מהותיות.")
     if has("מיילים ששלחת על חוזים", 2):
         say("מיילים ששלחת על חוזים", "התכתבות יוצאת על חוזים והסכמים.")
     if has("קורסים, כנסים והרצאות", 3):
@@ -518,15 +558,19 @@ def run(payload_json: str) -> str:
                          "מיילים על רכישת נכס", "חשבונות שוטפים: חשמל, גז, מים, תקשורת"),
               "עבודה ולימודים": ("מעסיק לפי מיילים", "ותק לפי מיילים מהמעסיק", "היקף משרה", "מוסד אקדמי בתיבה",
                                  "מיילים ששלחת על חוזים", "קורסים, כנסים והרצאות"),
-              "כספים": ("חיסכון פנסיוני פעיל", "מיילים על הוראות קבע", alerts, "הקשר הארוך ביותר עם ספק", problems),
+              "כספים": ("הקשר הארוך ביותר עם ספק",),
               "פנאי": ("יעדי טיסה",)}
     for x in portrait:
+        if x.get("topic"):  # the fixed facts already have theirs, and are always shown
+            x["main"] = True
+            continue
         x["main"] = x["label"] in ("עיר מגורים לפי חשבונות", "עדכון כתובת ברשות האוכלוסין", "משכנתא", "מעסיק לפי מיילים", "היקף משרה",
-                                   "מוסד אקדמי בתיבה", problems) or x.get("join") == "תחומי עניין"
+                                   "מוסד אקדמי בתיבה") or x.get("join") == "תחומי עניין"
         x["topic"] = next((t for t, labels in topics.items() if x["label"] in labels),
                           "פנאי" if x.get("join") == "תחומי עניין" else "ברשת")
-    # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name
-    ai_facts = [{"label": x["label"], "text": x["text"]} for x in portrait if x["topic"] != "ברשת"]
+    # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name,
+    # and not the lines marked as the person's own business
+    ai_facts = [{"label": x["label"], "text": x["text"]} for x in portrait if x["topic"] != "ברשת" and x.get("ai", True)]
 
     # ---- what the AI paragraph may see: subjects from businesses only, with whatever identifies someone taken out. `readable`
     # already leaves out personal senders and excluded sectors. A stranger's name inside a subject can't be recognised here

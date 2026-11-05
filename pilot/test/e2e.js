@@ -57,6 +57,8 @@ function fixture() {
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
   for (let m = 0; m < 3; m++) add(100 + 30 * m, "billing@sender.netfree.link", "החשבונית החודשית שלך");
   add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
+  // a mailbox in weekly use: more mails sent than weeks in the period
+  for (let d = 0; d < 200; d++) add(5 * d + 1, "", "עדכון", true);
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
@@ -212,11 +214,18 @@ async function run(browser, mode) {
   await page.fill("#hh-name", HH_NAME);
   await page.click("#details-next");
   if (mode === "private") { await page.uncheck("#web-ok"); await page.uncheck("#ai-ok"); } // this run also proves nothing goes out without the boxes
+  // what was finished at the very moment the report screen came up
+  await page.evaluate(() => new MutationObserver(() => {
+    if (!window.__atReport && document.querySelector("#s-report.on")) window.__atReport = { complete: S.run.complete, stagesLeft: [...document.querySelectorAll("#stages li:not(.done)")].map((li) => li.dataset.k).join() };
+  }).observe(document.querySelector("#s-report"), { attributes: true }));
   await page.click("#connect");
-  await page.waitForSelector("#s-report.on", { timeout: 180000 });
-  assert(await page.isVisible("#bg-status"), "no word about the work still running");
+  // the report comes up once, after every scan and the last writing, so nothing changes while it is being read
+  await page.waitForSelector("#s-report.on", { timeout: 300000 });
+  assert.deepStrictEqual(await page.evaluate(() => window.__atReport), { complete: true, stagesLeft: "" }, "the report was shown before the work behind it finished");
+  assert((await page.textContent("#bg-status")).includes("בוטלה"), "no word that access was revoked");
+  const shownAt = await page.textContent("#rep-portrait");
   await page.evaluate(() => S.background);
-  assert.strictEqual(await page.evaluate(() => S.run.complete), true, "the background read did not finish");
+  assert.strictEqual(await page.textContent("#rep-portrait"), shownAt, "the summary changed after the report came up");
   // a final result that moves rows and changes a value: answers follow their row, and the changed row's answer is dropped
   const remap = await page.evaluate(() => {
     const original = S.result;
@@ -285,7 +294,12 @@ async function run(browser, mode) {
     assert.ok(String(report.subscriptions.v).includes("saasco.io"), "recurring charges from an unknown sender: " + JSON.stringify(report.subscriptions) + " unknown:" + JSON.stringify(await page.evaluate(() => S.result.stats.by_class)));
     assert.ok(String(report.active_hours.v).includes(":00"), "active hours");
     assert.ok(/%$/.test(report.promo_share.v), "promotion share");
-    assert.strictEqual(await page.locator("#hero-tiles .tile").count(), 2, "only the response time and activity stay on top");
+    assert.strictEqual(await page.locator("#rep-hero, .tile").count(), 0, "the numbers card on top is gone; the mailbox gets one line in the summary");
+    // the fixed facts that open the summary: one to a line, said either way, and silent where there is nothing to judge by
+    const facts = await page.evaluate(() => factLines().map((l) => l.text));
+    assert.deepStrictEqual(facts, ["תיבת מייל פעילה.", "תשלום סדיר לספק אחד, חצי שנה ומעלה, ויש בתיבה אישורים על הוראות קבע.", "אין בתיבה בעיות תשלום מהותיות.",
+      "לא נפתחו מחלוקות: לא נשלחו מהתיבה ערעורים או תלונות.", "יש בתיבה הודעות על הליך משפטי, הוצאה לפועל או עיקול."], "the fixed facts");
+    assert.strictEqual(await page.locator("#rep-portrait .p-line").first().locator("p").count(), facts.length, "each fixed fact gets its own line");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
     assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
     const suppliers = await page.evaluate(() => S.result.suppliers);
@@ -353,6 +367,12 @@ async function run(browser, mode) {
     // the top of the report: conclusions by topic, the workplace, and real links
     const top = await page.textContent("#rev-portrait .portrait-top");
     assert(top.includes("עבודה בהיקף חלקי") && top.includes("התאגדה ב-2005"), "the conclusions on top: " + top);
+    // the mailbox line opens the conclusions, never goes to the AI, and goes down with the row it rests on
+    assert(top.trim().startsWith("עובדות") && top.includes("תיבת מייל פעילה"), "the fixed facts on top: " + top);
+    assert(!/תיבת מייל|יש בתיבה הודעות על הליך|לא נפתחו מחלוקות/.test(aiCalls.join(" ")), "a line that is the person's own business went to the AI");
+    await page.uncheck(`${row("sent_per_week")} [data-show]`);
+    assert(!(await page.textContent("#rev-portrait .portrait-top")).includes("תיבת מייל"), "the mailbox line outlived its row");
+    await page.check(`${row("sent_per_week")} [data-show]`);
     const hrefs = await page.$$eval("#rev-portrait .portrait-links a", (a) => a.map((x) => x.href));
     assert(hrefs.includes("https://www.dugma-example.co.il/"), "the employer's site: " + hrefs);
     assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
