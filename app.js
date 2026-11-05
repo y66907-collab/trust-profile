@@ -243,6 +243,61 @@ function decodeWords(s) {
 const addrOf = (s) => ((s || "").match(/[\w.+'-]+@[\w.-]+\.\w+/) || [""])[0].toLowerCase();
 const nameOf = (s) => decodeWords((s || "").replace(/<[^>]*>/, "")).replace(/["']/g, "").trim();
 
+// ---------------------------------------------------------------- the owner's own name, in any spelling
+// A name is compared by its consonants, so the Hebrew someone typed meets whatever English spelling an address carries.
+// A Hebrew letter that English writes in two ways gives two readings, and any one of them is enough
+const HE_CONSONANTS = { "ב": ["b"], "ג": ["g"], "ד": ["d"], "ו": ["", "b"], "ז": ["z"], "ט": ["t"], "כ": ["k", ""], "ך": ["k", ""], "ל": ["l"], "מ": ["m"], "ם": ["m"],
+  "נ": ["n"], "ן": ["n"], "ס": ["s"], "פ": ["p"], "ף": ["p"], "צ": ["ts"], "ץ": ["ts"], "ק": ["k"], "ר": ["r"], "ש": ["s"], "ת": ["t"] };
+const squeeze = (s) => s.replace(/(.)\1+/g, "$1");
+function skeletons(word) {
+  const w = String(word || "").toLowerCase().replace(/[^a-zא-ת]/g, "");
+  if (!/[א-ת]/.test(w)) {
+    const t = w.replace(/^j/, "y").replace(/sh/g, "s").replace(/tz/g, "ts").replace(/ch|kh/g, "").replace(/ph/g, "p").replace(/th/g, "t")
+      .replace(/[cq]/g, "k").replace(/x/g, "ks").replace(/f/g, "p").replace(/[vw]/g, "b");
+    return [squeeze(t[0] === "y" ? "y" + t.slice(1).replace(/[aeiouhy]/g, "") : t.replace(/[aeiouhy]/g, ""))];
+  }
+  let out = [""];
+  [...w].forEach((c, i) => {
+    const ways = c === "י" ? (i === 0 ? ["y", ""] : [""]) : HE_CONSONANTS[c] || [""];
+    out = out.flatMap((s) => ways.map((x) => s + x)).slice(0, 16);
+  });
+  return [...new Set(out.map(squeeze))];
+}
+// First name and family name, each as the set of its readings
+function ownNames(owner) {
+  const first = new Set(), last = new Set();
+  for (const full of [owner.name_he, owner.name_en]) {
+    const words = String(full || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) continue;
+    skeletons(words[0]).forEach((s) => first.add(s));
+    skeletons(words.slice(1).join("")).forEach((s) => last.add(s));
+  }
+  return { first, last };
+}
+// Both names have to be there, so a relative who shares the family name is not taken for the owner: an initial is not a
+// name. And a pair of names with too few consonants to tell people apart is not compared at all
+function isOwnName(text, names) {
+  const words = String(text || "").toLowerCase().split(/[^a-zא-ת]+/).filter(Boolean);
+  const pairs = [...names.first].flatMap((f) => [...names.last].map((l) => [f, l])).filter(([f, l]) => f && l && f.length + l.length >= 4);
+  if (!pairs.length || !words.length) return false;
+  if (words.length === 1) return pairs.some(([f, l]) => skeletons(words[0]).some((s) => s === squeeze(f + l) || s === squeeze(l + f)));
+  return words.some((w, i) => w.length >= 2 && pairs.some(([f, l]) => skeletons(w).includes(f) && skeletons(words.filter((_, j) => j !== i).join("")).includes(l)));
+}
+// A work address: the owner's own name in front of an organisation's domain, on mail that came in or went out. A mailbox
+// service is not a workplace, and neither is a place of study, where every student gets an address
+const NOT_A_WORKPLACE = /(^|\.)(ac\.[a-z]{2}|edu|edu\.[a-z]{2}|k12\.[a-z]{2})$/;
+function workAddress(rows, owner, own) {
+  const names = ownNames(owner), seen = {};
+  for (const r of rows) {
+    if (!r.real) continue; // only an opened mail carries the whole address
+    const [local, domain] = String(r.sent ? r.to : r.from).split("@");
+    if (!domain || `${local}@${domain}` === own || PERSONAL_DOMAINS.includes(domain) || NOT_A_WORKPLACE.test(domain) || !isOwnName(local, names)) continue;
+    seen[domain] = (seen[domain] || 0) + 1;
+  }
+  const [domain, mails] = Object.entries(seen).sort((a, b) => b[1] - a[1])[0] || [];
+  return domain ? { domain, mails } : null;
+}
+
 function stage(k, state, n) {
   const li = $(`#stages [data-k="${k}"]`);
   li.classList.remove("now", "done");
@@ -656,6 +711,11 @@ async function readMailbox() {
   const toOpen = new Set();
   await pool(SIGNAL_QUERIES, 8, async (q) => { (await search(q)).forEach((m) => toOpen.add(m.id)); });
   sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
+  // mail from or to another address in the owner's own name: opened, since where that address lives says where they work
+  await pool([S.owner.name_he, S.owner.name_en].filter(Boolean).map((n) => `"${n.replace(/"/g, "")}"`), 2, async (n) => {
+    (await search(`from:${n} -in:sent`)).slice(0, 10).forEach((m) => toOpen.add(m.id));
+    (await search(`in:sent to:${n}`)).slice(0, 10).forEach((m) => toOpen.add(m.id));
+  });
   if ($("#ai-ok").checked) await pool(AI_TOPICS, 4, async (q) => { (await search(q)).slice(0, 25).forEach((m) => toOpen.add(m.id)); });
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
@@ -677,7 +737,8 @@ async function readMailbox() {
     return new Promise((res, rej) => {
       S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
       worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut, outside } });
+        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut, outside,
+        work_address: workAddress(rows.values(), S.owner, own) } });
     }).then((r) => ({ r, counted }));
   };
   const first = await runEngine();
@@ -722,6 +783,8 @@ async function readMailbox() {
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
       await S.enrich;
+      // a workplace that only the whole mailbox showed is looked up now
+      await lookupEmployer(last.r).catch((e) => console.warn("employer lookup stopped", e));
       applyFinal(last.r);
     } catch (e) {
       console.warn("background read stopped", e); // the first result stands; the feedback says the count is partial
@@ -839,11 +902,33 @@ const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "
 // Several people can share a name, so the page that mentions the workplace is the likelier one
 const bestProfile = (hits, employer) => hits.find((h) => nameWords(employer).every((w) => nameWords(h.text).includes(w)))?.url;
 const AGGREGATORS = /linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il|drushim|alljobs|jobmaster|checkid|dunsguide|bdi|theworker|rocketreach|theorg|maariv|ynet|globes|calcalist|themarker/;
+const DOMAIN_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+const LINKEDIN_COMPANY = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/;
+const cleanUrl = (u) => String(u || "").split(/[?#]/)[0];
+// A workplace known only by the domain of a work address: its own site says what it is, in its own words
+async function lookupByDomain(domain) {
+  const labels = domain.split(".").slice(0, -1);
+  if (labels.length > 1 && /^(co|com|org|net|gov|muni)$/.test(labels[labels.length - 1])) labels.pop();
+  const label = labels[labels.length - 1];
+  const hits = await webHits([`site:${domain}`, `site:linkedin.com/company "${label}"`]);
+  const hostOf = (h) => { try { return new URL(h.link).hostname.toLowerCase(); } catch { return ""; } };
+  const site = hits.find((h) => /^https:\/\//.test(h.link || "") && (hostOf(h) === domain || hostOf(h).endsWith("." + domain)));
+  const page = hits.find((h) => LINKEDIN_COMPANY.test(cleanUrl(h.link)) && nameWords(label).every((w) => nameWords(h.title).includes(w)));
+  // the name as the organisation writes it, when its own page gives one
+  const name = (page && String(page.title).split(/\s[|–-]\s/)[0].trim().slice(0, 40)) || domain;
+  const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, page && { text: `${name} ב-LinkedIn`, url: cleanUrl(page.link) }].filter(Boolean);
+  if (!links.length) return;
+  // a search result is cut mid-sentence, so only the whole sentences are kept
+  const snippet = String(site?.snippet || "").replace(/\s+/g, " ").slice(0, 180);
+  const whole = snippet.slice(0, snippet.lastIndexOf(". ") > 25 ? snippet.lastIndexOf(". ") : snippet.length).replace(/[\s.…]+$/, "");
+  S.employer = { name, lead: whole, links, snippet: whole, note: "מחיפוש ברשת" };
+}
 async function lookupEmployer(r) {
-  if (!$("#web-ok").checked) return;
+  if (!$("#web-ok").checked || S.employer) return;
   const row = r.groups.flatMap((g) => g.params).find((p) => p.key === "employer");
   if (!row || row.outcome !== "found" || (row.note || "").includes("שולח")) return;
   const name = String(row.v);
+  if (DOMAIN_NAME.test(name)) return lookupByDomain(name);
   const settle = async (p) => { try { return await p; } catch (e) { console.warn("employer lookup failed", e); return []; } };
   const [records, hits] = await Promise.all([
     settle(fetch(`${REGISTRY_API}?resource_id=${COMPANY_REGISTRY.id}&limit=50&q=${encodeURIComponent(name)}`).then((x) => x.json()).then((x) => x.result?.records || [])),
@@ -855,8 +940,7 @@ async function lookupEmployer(r) {
   const record = new Set(matches.map((x) => x["מספר חברה"])).size === 1 ? matches[0] : null;
   S.bestLinkedin = bestProfile(S.linkedinHits || [], name);
   const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
-  const clean = (u) => String(u || "").split(/[?#]/)[0];
-  const linkedin = hits.map((h) => clean(h.link)).find((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/.test(u));
+  const linkedin = hits.map((h) => cleanUrl(h.link)).find((u) => LINKEDIN_COMPANY.test(u));
   const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !AGGREGATORS.test(new URL(h.link).hostname) &&
     nameWords(h.title).some((w) => nameWords(name).includes(w)));
   const lead = record ? [`${record["סטטוס חברה"]}`, year && `התאגדה ב-${year}`, record["שם עיר"]].filter(Boolean).join(", ") : "";
@@ -873,9 +957,9 @@ function attachEmployer(r) {
     if (item) item.url = S.bestLinkedin;
   }
   if (!S.employer || r.groups.some((g) => g.title === "מקום העבודה")) return;
-  const { name, lead, links } = S.employer;
+  const { name, lead, links, note } = S.employer;
   r.groups.push({ title: "מקום העבודה", params: [{ label: `על ${name}`, v: [lead, ...links.map((l) => l.url)].filter(Boolean).join(" · "), lead, links, n: null, span: "", why: null,
-    note: "מרשם החברות ומחיפוש ברשת", key: "employer_about", fb_label: "על מקום העבודה", detail: false, private: false, outcome: "found" }] });
+    note: note || "מרשם החברות ומחיפוש ברשת", key: "employer_about", fb_label: "על מקום העבודה", detail: false, private: false, outcome: "found" }] });
 }
 
 // ---------------------------------------------------------------- the AI paragraph
