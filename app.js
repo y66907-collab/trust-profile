@@ -621,20 +621,28 @@ async function registryRows(reg, name, city) {
 
 const ACHIEVEMENT_RX = /אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner/i;
 const SKIP_MENTIONS = /(^|\.)(psakdin|nevo|takdin|lawdata|dinimveod)\.co\.il$|(^|\.)gov\.il$/; // a court page under a shared name would accuse the wrong person
-const NETWORK_LINKS = [
-  ["LinkedIn", /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([A-Za-z0-9%_-]+)\/?$/, (u) => `https://www.linkedin.com/in/${u}`],
-  ["Instagram", /^https:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)\/?$/, (u) => `https://www.instagram.com/${u}`],
-  ["Facebook", /^https:\/\/(?:[a-z-]+\.)?facebook\.com\/([A-Za-z0-9.]{5,})\/?$/, (u) => `https://www.facebook.com/${u}`],
-  ["GitHub", /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/?$/, (u) => `https://github.com/${u}`],
-];
 async function webHits(queries) {
   if (!CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return [];
   const r = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ kind: "imtrustme-search", queries }) });
   const reply = await r.json();
   return reply.ok ? reply.results || [] : [];
 }
-async function lookupOutside(city, account) {
-  const out = { licenses: [], companies: [], mentions: [], web_links: {} };
+// A place or a workplace named in a text, also behind a Hebrew prefix ("בחיפה")
+const namesIt = (text, phrase) => {
+  const words = new Set(nameWords(text).flatMap((w) => [w, w.replace(/^[בלמהוש]/, "")]));
+  const want = nameWords(phrase);
+  return want.join("").length >= 3 && want.every((w) => words.has(w));
+};
+// The word an organisation's domain is built on: "example" in mail.example.co.il
+const domainLabel = (domain) => {
+  const labels = String(domain || "").split(".").slice(0, -1);
+  if (labels.length > 1 && /^(co|com|org|net|gov|muni)$/.test(labels[labels.length - 1])) labels.pop();
+  return labels[labels.length - 1] || "";
+};
+// `work` is what the mailbox already showed about where the person works. A page that carries the name together with the
+// city or the workplace is about this person, and not about someone who shares the name
+async function lookupOutside(city, account, work = []) {
+  const out = { licenses: [], companies: [], mentions: [] };
   if (!$("#web-ok").checked) return out;
   const nameHe = S.owner.name_he;
   const nameEn = S.owner.name_en || (/^[A-Za-z][A-Za-z.' -]+ [A-Za-z.' -]+$/.test(account || "") ? account.trim() : null);
@@ -642,7 +650,7 @@ async function lookupOutside(city, account) {
   const [licenses, companies, hits] = await Promise.all([
     Promise.all(REGISTRIES.map((reg) => settle(registryRows(reg, nameHe, city)))),
     settle(registryRows(COMPANY_REGISTRY, nameHe, city)),
-    settle(webHits([`"${nameHe}"`, nameEn && `"${nameEn}"`, `site:linkedin.com/in "${nameEn || nameHe}"`].filter(Boolean))),
+    settle(webHits([`"${nameHe}"`, nameEn && `"${nameEn}"`].filter(Boolean))),
   ]);
   out.licenses = licenses.flat();
   out.companies = companies;
@@ -653,16 +661,14 @@ async function lookupOutside(city, account) {
     seen.add(link);
     if (!hasAllWords(`${h.title} ${h.snippet}`, nameHe) && !(nameEn && hasAllWords(`${h.title} ${h.snippet}`, nameEn))) continue;
     const domain = new URL(link).hostname.replace(/^www\./, "");
-    const net = NETWORK_LINKS.map(([n, rx, make]) => { const m = rx.exec(link.split("?")[0]); return m && [n, make(m[1])]; }).find(Boolean);
-    if (net) {
-      out.web_links[net[0]] ??= net[1];
-      if (net[0] === "LinkedIn") (S.linkedinHits ??= []).push({ url: net[1], text: `${h.title} ${h.snippet}` });
-      continue;
-    }
-    if (/linkedin|facebook|instagram|tiktok|twitter|x\.com/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
-    out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0] });
+    // A profile is never looked up by name: one that shares the name would be someone else's. Profiles come only from
+    // the person's own mail (readRelevant), and where the mail has none, the report has none
+    if (/linkedin|facebook|instagram|tiktok|twitter|x\.com|github/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
+    const about = `${h.title} ${h.snippet}`;
+    const tied = (city && namesIt(about, city) && "city") || (work.some((w) => namesIt(about, w)) && "work") || null;
+    out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0], ...(tied ? { tied } : {}) });
   }
-  const standsOut = (m) => (ACHIEVEMENT_RX.test(m.text) ? 0 : 1);
+  const standsOut = (m) => (m.tied ? 0 : ACHIEVEMENT_RX.test(m.text) ? 1 : 2);
   out.mentions = out.mentions.sort((a, b) => standsOut(a) - standsOut(b)).slice(0, 5);
   return out;
 }
@@ -842,7 +848,8 @@ async function readMailbox() {
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
   const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0, cv_files: 0 }; });
-  const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
+  const worksAt = [readOut.employer?.name, domainLabel(workAddress(rows.values(), S.owner, own)?.domain)].filter(Boolean);
+  const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0], worksAt).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
   stage("read", "done", fmtN(total - pending.size));
@@ -1026,17 +1033,13 @@ const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 // ---------------------------------------------------------------- the workplace
 // Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
 const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
-// Several people can share a name, so the page that mentions the workplace is the likelier one
-const bestProfile = (hits, employer) => hits.find((h) => nameWords(employer).every((w) => nameWords(h.text).includes(w)))?.url;
 const AGGREGATORS = /linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il|drushim|alljobs|jobmaster|checkid|dunsguide|bdi|theworker|rocketreach|theorg|maariv|ynet|globes|calcalist|themarker/;
 const DOMAIN_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 const LINKEDIN_COMPANY = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/;
 const cleanUrl = (u) => String(u || "").split(/[?#]/)[0];
 // A workplace known only by the domain of a work address: its own site says what it is, in its own words
 async function lookupByDomain(domain) {
-  const labels = domain.split(".").slice(0, -1);
-  if (labels.length > 1 && /^(co|com|org|net|gov|muni)$/.test(labels[labels.length - 1])) labels.pop();
-  const label = labels[labels.length - 1];
+  const label = domainLabel(domain);
   const hits = await webHits([`site:${domain}`, `site:linkedin.com/company "${label}"`]);
   const hostOf = (h) => { try { return new URL(h.link).hostname.toLowerCase(); } catch { return ""; } };
   const site = hits.find((h) => /^https:\/\//.test(h.link || "") && (hostOf(h) === domain || hostOf(h).endsWith("." + domain)));
@@ -1066,7 +1069,6 @@ async function lookupEmployer(r) {
   const wanted = nameWords(dropCompanyWords(name));
   const matches = records.filter((x) => wanted.length && wanted.every((w) => nameWords(x["שם חברה"]).includes(w)));
   const record = new Set(matches.map((x) => x["מספר חברה"])).size === 1 ? matches[0] : null;
-  S.bestLinkedin = bestProfile(S.linkedinHits || [], name);
   const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
   const linkedin = hits.map((h) => cleanUrl(h.link)).find((u) => LINKEDIN_COMPANY.test(u));
   const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !AGGREGATORS.test(new URL(h.link).hostname) &&
@@ -1094,13 +1096,6 @@ function attachOwner(r) {
   if (params.length) r.groups.push({ title: "פרטים אישיים", params });
 }
 function attachEmployer(r) {
-  const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");
-  if (S.bestLinkedin && profileRow?.note?.includes("מישהו אחר")) {
-    profileRow.link = S.bestLinkedin;
-    profileRow.v = S.bestLinkedin.split("//")[1].replace(/^www\./, "");
-    const item = (r.portrait || []).find((x) => x.label === "LinkedIn");
-    if (item) item.url = S.bestLinkedin;
-  }
   if (!S.employer || r.groups.some((g) => g.title === "מקום העבודה")) return;
   const { name, lead, links, note } = S.employer;
   r.groups.push({ title: "מקום העבודה", params: [{ label: `על ${name}`, v: [lead, ...links.map((l) => l.url)].filter(Boolean).join(" · "), lead, links, n: null, span: "", why: null,
