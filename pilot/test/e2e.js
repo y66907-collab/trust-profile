@@ -334,8 +334,9 @@ async function run(browser, mode) {
       assert.ok(report.web_mentions.links.some((l) => l.url === "https://news-example.co.il/a"), "web mention");
       assert(!/psakdin|other-example/.test(JSON.stringify(report.web_mentions)), "court or unrelated result in the report");
       assert.ok(String(report.companies_registry.v).includes("515"), "company registry");
-      assert.strictEqual(report.platform_github.link, "https://github.com/test-owner-gh", "a profile found by web search");
-      assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
+      // a profile is never looked up by name: the search returned one under the owner's name, and it is nowhere
+      assert(!(await page.evaluate(() => JSON.stringify(S.result))).includes("test-owner-gh"), "a profile found by name reached the report");
+      assert(!searches.join(" ").includes("linkedin.com/in"), "a profile was searched for by name");
       // the paragraph is added above the report; it says what the rows say and nothing about who the person is
       const para = await page.evaluate(() => portraitText());
       for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "לא נצפו בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
@@ -466,7 +467,8 @@ async function run(browser, mode) {
     const hrefs = await page.$$eval("#rev-portrait .portrait-links a", (a) => a.map((x) => x.href));
     assert(hrefs.includes("https://www.dugma-example.co.il/"), "the employer's site: " + hrefs);
     assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
-    assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
+    assert(hrefs.includes("https://www.linkedin.com/in/test-owner"), "the profile link from the participant's own mail: " + hrefs);
+    assert(!hrefs.some((h) => h.includes("test-owner-gh")), "a profile found by name among the links: " + hrefs);
     assert.strictEqual(employerSearches.length, 1, "employer searches");
     // a workplace known only by its domain: its own site and its own words, and no other page that merely mentions it
     const byDomain = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("workplace-example.co.il"); const got = S.employer; S.employer = kept; return got; });
@@ -476,7 +478,6 @@ async function run(browser, mode) {
       { text: "Workplace Example ב-LinkedIn", url: "https://il.linkedin.com/company/workplace" }] }, "the workplace from its domain");
     const solo = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("solo-example.com"); const got = S.employer; S.employer = kept; return got; });
     assert.deepStrictEqual([solo.name, solo.lead, solo.links.length], ["Solo-Example", "Solo-Example בונה אתרים לעסקים", 1], "the name as the site itself spells it");
-    assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
     assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
     assert(!/הצעות שנבחרו|New jobs for you/.test(aiCalls.join(" ")), "a job alert went to the AI");
