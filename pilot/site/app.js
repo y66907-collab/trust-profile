@@ -873,6 +873,7 @@ async function readMailbox() {
   // Until then this screen stays, with the rest of the work as its own stages
   show = () => showBackground(total - pending.size, total);
   show();
+  S.ownerScan = runOwnerScan(after, drop).catch((e) => console.warn("owner scan stopped", e));
   S.enrich = (async () => {
     await lookupEmployer(first.r).catch((e) => console.warn("employer lookup stopped", e));
     await askAi(first.r).catch((e) => console.warn("AI paragraph stopped", e));
@@ -914,6 +915,8 @@ async function readMailbox() {
       await S.enrich;
     }
     S.run.read_seconds = Math.round((performance.now() - t0) / 1000);
+    await S.ownerScan;
+    attachOwner(S.result);
     await revoke();
     rows.clear(); // the envelopes are not kept once the profile exists
     window.onbeforeunload = null;
@@ -942,6 +945,7 @@ function showBackground(done, total) {
 // on a value that has since changed is dropped: it was about something else
 function applyFinal(r) {
   attachEmployer(r);
+  attachOwner(r);
   attachAi(r);
   const index = (res) => {
     const m = new Map();
@@ -1071,6 +1075,23 @@ async function lookupEmployer(r) {
   const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, linkedin && { text: `${name} ב-LinkedIn`, url: linkedin }].filter(Boolean);
   if (!lead && !links.length) return;
   S.employer = { name, lead, links, snippet: String(site?.snippet || "").slice(0, 180) };
+}
+// Age and marital status, from the participant's own documents and words (owner.js). They are shown in the report,
+// reach the feedback only like any other row, and never go to the AI
+async function runOwnerScan(after, drop) { // the same years as the rest of the reading
+  await new Promise((res, rej) => document.head.append(Object.assign(document.createElement("script"), { src: "owner.js", onload: res, onerror: rej })));
+  await loadPdf();
+  S.ownerFound = await window.ownerScan(S.owner, (url) => gget(url, READ_UNITS), after, drop);
+}
+function attachOwner(r) {
+  const f = S.ownerFound;
+  if (!f || r.groups.some((g) => g.title === "פרטים אישיים")) return;
+  const row = (key, label, v, note) => ({ label, v, n: null, span: "", why: null, note, key, fb_label: label, detail: false, private: false, outcome: "found" });
+  const params = [];
+  if (f.age) params.push(row("owner_age", "גיל", `${f.age.age}${f.age.day ? `, יום הולדת ב-${Number(f.age.day.slice(3))}.${Number(f.age.day.slice(0, 2))}` : ""}`, `שנת לידה ${f.age.born}, לפי ${f.age.docs} מסמכים עם השם המלא`));
+  if (f.family) params.push(row("owner_family", "מצב משפחתי", f.family.status, [f.family.forms ? `${f.family.forms} טפסים` : "", f.family.spouse ? `${f.family.spouse} מיילים שכתבת` : "", f.family.maidenDocs ? "שם נעורים במסמכים" : ""].filter(Boolean).join(" · ")));
+  if (f.kids) params.push(row("owner_kids", "ילדים", "כנראה יש", `מ-${f.kids.words} מיילים שכתבת${f.kids.years.length ? `, ובמסמכים שורות לידה משנים ${f.kids.years.join(", ")}` : ""}`));
+  if (params.length) r.groups.push({ title: "פרטים אישיים", params });
 }
 function attachEmployer(r) {
   const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");

@@ -375,6 +375,31 @@ async function run(browser, mode) {
   await shot("2-report");
   assert(!FORBIDDEN.test(await page.evaluate(() => JSON.stringify(S.result.groups) + document.body.textContent)), "purpose word in the report");
 
+  // Age and marital status are read for every participant; this mailbox states neither, so no row is made up
+  assert.strictEqual(await page.evaluate(() => typeof window.ownerScan), "function", "the age and family scan did not run");
+  assert(!/מצב משפחתי/.test(await page.evaluate(() => JSON.stringify(S.result.groups))), "a marital status was made up");
+  if (mode === "full") {
+    const found = await page.evaluate(async () => {
+      const b64 = (t) => btoa(String.fromCharCode(...new TextEncoder().encode(t))).replace(/\+/g, "-").replace(/\//g, "_");
+      const OWN = "ישראלה כהן <own@example.com>";
+      const msg = (id, from, body, sent, subject = "x") => ({ id, internalDate: String(Date.UTC(2024, 5, 1)), labelIds: sent ? ["SENT"] : [],
+        payload: { mimeType: "text/plain", headers: [{ name: "From", value: from }, { name: "Subject", value: subject }], body: { data: b64(body) }, parts: [] } });
+      const box = [msg("a", "bank@example.com", "שם מלא: ישראלה כהן תאריך לידה: 01/02/1990", false),
+        msg("b", OWN, "שמי דינה לוי, אני בת 37 ומחפשת עבודה", true),
+        msg("c", OWN, "אולי בעלי יזכור בערב", true), msg("d", OWN, "כי בעלי יוכל לצאת", true), msg("e", OWN, "כולל בעלי זיקות בדוח", true),
+        msg("f", "form@example.com", "ישראלה כהן מצב משפחתי: רווק נשוי גרוש אלמן", false), msg("g", OWN, "הבן שלי חולה היום", true)];
+      const get = async (url) => (url.includes("/messages?") ? { messages: box.map((m) => ({ id: m.id })) } : box.find((m) => url.includes(`/messages/${m.id}?`)));
+      return window.ownerScan({ name_he: "ישראלה כהן" }, get, "after:2000/01/01");
+    });
+    assert.strictEqual(found.age.born, 1990, "the birth year stated next to the name was missed");
+    assert.strictEqual(found.age.stated, 0, "an age written for a friend was taken as the owner's");
+    assert.strictEqual(found.age.statedForOthers > 0, true, "the friend's age was not recognised");
+    assert.strictEqual(found.family.status, "נשואה", "marital status was missed");
+    assert.strictEqual(found.family.spouse, 2, "\"owners of\" was counted as a spouse");
+    assert.strictEqual(found.family.blankForms > 0 && found.family.forms === 0, true, "a blank form was read as an answer");
+    assert.strictEqual(found.kids.words, 1, "a child mentioned by the owner was missed");
+  }
+
   // sharing the report is the default; the other way is a small link below it
   assert.strictEqual(await page.locator("#s-choose").count(), 0, "the choice screen is back");
   await page.click('#s-report [data-mode="full"]');
