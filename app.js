@@ -14,7 +14,7 @@ const PLATFORM_DOMAINS = ["linkedin.com", "facebookmail.com", "facebook.com", "i
 const INTERESTS = [
   { key: "fitness", label: "כושר וספורט", domains: ["crossfit.com", "trainheroic.com", "myprotein.com", "strava.com", "garmin.com"] },
   { key: "tech", label: "טכנולוגיה ו-AI", domains: ["github.com", "supabase.com", "vercel.com", "anthropic.com", "openai.com", "bubble.io", "pipedream.com", "zoom.us", "cursor.com"] },
-  { key: "career", label: "קריירה וחיפוש עבודה", domains: ["greenhouse-mail.io", "comeet.co", "lever.co", "workablemail.com", "alljobs.co.il", "drushim.co.il", "glassdoor.com"] },
+  { key: "career", label: "אתרי משרות וגיוס", domains: ["greenhouse-mail.io", "comeet.co", "lever.co", "workablemail.com", "alljobs.co.il", "drushim.co.il", "glassdoor.com"] },
   { key: "travel", label: "נסיעות וטיסות", domains: ["booking.com", "airbnb.com", "ryanair.com", "elal.co.il", "skygini.com", "skyscanner.com", "issta.co.il", "wizzair.com", "easyjet.com", "expedia.com", "agoda.com"] },
   { key: "shopping", label: "קניות אונליין", domains: ["amazon.com", "aliexpress.com", "ebay.com", "ksp.co.il", "ivory.co.il", "shein.com", "next.co.il", "email.apple.com", "samsung.com"] },
   { key: "entertainment", label: "מוזיקה וסטרימינג", domains: ["netflix.com", "spotify.com", "disneyplus.com", "apple.com"] },

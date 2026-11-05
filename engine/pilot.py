@@ -59,7 +59,7 @@ FACTS_TOPIC = "עובדות"  # the fixed lines that open the summary; app.js ke
 BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
               "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
-         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
+         "מיילים על משרות ומועמדות": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
          "היקף משרה": "job_scope", "משרה נוכחית לפי קורות חיים": "cv_current", "קורות חיים ששלחת": "cv_sent", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
          "מיילים ששלחת על חוזים": "contracts_sent", "מיילים על מעבר מגורים": "moving", "מיילים על רכישת נכס": "property_docs",
          "אזכורים ברשת": "web_mentions", "רישיונות במאגרים ציבוריים": "licenses", "חברות על השם שלך": "companies_registry", "מיילים על הזמנות ומשלוחים": "orders",
@@ -107,6 +107,11 @@ def P(v, ms=(), n=None, note=None):
 
 def NA(why):
     return {"v": None, "n": None, "span": "", "why": why, "note": None}
+
+
+JOB_BOARDS = ("drushim.co.il", "alljobs.co.il", "jobmaster.co.il", "jobinfo.co.il", "glassdoor.com", "indeed.com", "ziprecruiter.com")
+JOB_ALERT = re.compile(r"משרות חדשות|משרות ש?מתאימות|משרות עבורך|משרות בשבילך|התראת משרות|סוכן (?:חכם|משרות)|job alerts?|new jobs|jobs? for you|"
+                       r"jobs you may|recommended jobs|is hiring|are hiring", re.I)
 
 
 def name_variants(full: str) -> list[str]:
@@ -419,7 +424,7 @@ def run(payload_json: str) -> str:
         ]
         rest = [
             ("מה עולה מהנושאים", [
-                ("מיילים על חיפוש עבודה", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
+                ("מיילים על משרות ומועמדות", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
                 ("יעדי טיסה", fact(", ".join(ro.get("destinations") or []) or 0, len(ro.get("destinations") or []))),
                 ("מיילים על הזמנות ומשלוחים", life_row("orders")), ("קורסים, כנסים והרצאות", life_row("learning")),
                 ("מיילים על חוזים והסכמים", life_row("contracts")), ("מיילים ששלחת על חוזים", life_row("contracts_sent")),
@@ -612,11 +617,16 @@ def run(payload_json: str) -> str:
             out += layer
             i += 1
 
+    # A job alert is a mailing list: it says a person once signed up to a job site, not that they are looking for work
+    # now. Left in, hundreds of them read as a job hunt. An answer to an application is not an alert, and stays
+    def job_alert(m):
+        return any(m.domain == d or m.domain.endswith("." + d) for d in JOB_BOARDS) or JOB_ALERT.search(m.subject)
+
     seen_subjects, by_quarter = set(), {}
     for m in sorted(readable, key=lambda x: x.sent_at, reverse=True):
         text = bare(m.subject)
         who = m.org_he or m.domain
-        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects:
+        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects and not job_alert(m):
             seen_subjects.add((who, text))
             quarter = (m.sent_at[:4], (int(m.sent_at[5:7]) - 1) // 3)
             by_quarter.setdefault(quarter, {}).setdefault(who, []).append({"d": m.sent_at[:7], "o": who, "s": text[:160]})
