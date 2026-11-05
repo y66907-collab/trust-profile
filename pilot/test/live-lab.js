@@ -101,7 +101,8 @@ const server = http.createServer(async (req, res) => {
         const name = url.pathname.slice(6);
         if (!SITE_FILES.has(name)) return empty(404);
         res.writeHead(200, { ...cors, "content-type": `${CONTENT_TYPES[name.split(".").pop()]}; charset=utf-8` });
-        return res.end(fs.readFileSync(path.join(SITE_DIR, name)));
+        const extra = name === "app.js" && process.env.LAB_APPEND ? `\n${fs.readFileSync(process.env.LAB_APPEND, "utf8")}` : ""; // a local experiment, never part of the page
+        return res.end(fs.readFileSync(path.join(SITE_DIR, name), "utf8") + extra);
       }
       if (url.pathname === "/admin/summary") return json(summary());
       if (url.pathname === "/admin/report") return json(reports[url.searchParams.get("stage") || "final"] || reports.first || null);

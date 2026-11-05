@@ -173,17 +173,9 @@ textarea { min-height: 84px; resize: vertical; }
 .portrait-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
 .portrait-links:empty { display: none; }
 .portrait-links a { padding: 5px 12px; border: 1px solid var(--tq); border-radius: 999px; font-size: 14px; text-decoration: none; }
-.portrait-wait { color: var(--tq); font-weight: 700; margin: 6px 0 10px; }
 .p-line p { margin: 0 0 4px; }
 .p-line p:last-child { margin-bottom: 0; }
 @media (max-width: 480px) { .p-line { grid-template-columns: 1fr; gap: 2px; } }
-
-/* the numbers people came for */
-.hero { background: var(--tq-soft); border-color: var(--tq-line); }
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.tile { background: var(--card); border-radius: 12px; padding: 14px; display: grid; gap: 4px; align-content: start; }
-.tile b { font-size: 24px; line-height: 1.2; color: var(--tq-deep); overflow-wrap: anywhere; }
-.tile span { font-size: 14px; color: var(--muted); }
 
 /* the report with redactions */
 .other-way { text-align: center; margin: 22px 0 8px; }
@@ -212,7 +204,6 @@ textarea { min-height: 84px; resize: vertical; }
 .fb-rep b { overflow-wrap: anywhere; }
 
 @media (max-width: 560px) {
-  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rv-row { grid-template-columns: 28px minmax(0, 1fr); }
   .rv-v { grid-row: 1 / span 3; }
   .rv-val, .rv-ev, .rv-act, .rv-kinds, .rv-note { grid-column: 2; }

@@ -57,9 +57,31 @@ function fixture() {
   add(93, "office@lawyer-example.co.il", "נסח טאבו");
   for (let m = 0; m < 3; m++) add(100 + 30 * m, "billing@sender.netfree.link", "החשבונית החודשית שלך");
   add(94, "office@lawyer-example.co.il", `נסח טאבו של ${OWNER_HE} ת.ז. 123456789 me@x.com`);
+  // job alerts: a mailing list, by its sender or by its subject. An answer to an application is neither
+  for (let m = 0; m < 3; m++) add(7 * m + 2, "jobs@drushim.co.il", "הצעות שנבחרו בשבילך");
+  add(9, "updates@board-example.com", "New jobs for you this week");
+  add(13, "no-reply@greenhouse-mail.io", "תודה על פנייתך לחברה");
+  // two CVs went out: the newer one is a candidate's, passed on, and the older one is the owner's own
+  add(4, "", "מסמך מצורף", true); last().file = "cv-candidate.docx";
+  last().doc = ["רון לוי", "ניסיון תעסוקתי", "2021 - היום | מנהל מוצר", "השכלה", "2015 - 2018 תואר ראשון"];
+  add(12, "", "הקובץ שביקשת", true); last().file = "Dana_Cohen_CV.docx";
+  last().doc = ["Dana Kohen", "דנה כהן | מפתחת", "ניסיון תעסוקתי", "2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "ממליצים: דנה כהן", "נייד 050-123-4567", "אתר www.dana-example.co.il",
+    "השכלה", "2022 - היום לימודי תעודה", "כישורים", "עבודת צוות"];
+  // a mailbox in weekly use: more mails sent than weeks in the period
+  for (let d = 0; d < 200; d++) add(5 * d + 1, "", "עדכון", true);
   return out;
 }
 const TEST_PDF = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 58>>stream\nBT /F1 12 Tf 72 720 Td (property address Tel Aviv) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
+// A Word file with these paragraphs: a zip with one deflated entry, the way Word stores its document
+function docx(lines) {
+  const xml = Buffer.from(`<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${lines.map((l) => `<w:p><w:r><w:t>${l}</w:t></w:r></w:p>`).join("")}</w:body></w:document>`);
+  const name = Buffer.from("word/document.xml"), packed = require("zlib").deflateRawSync(xml);
+  const local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(xml.length, 22); local.writeUInt16LE(name.length, 26);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(8, 10); central.writeUInt32LE(packed.length, 20); central.writeUInt32LE(xml.length, 24); central.writeUInt16LE(name.length, 28);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(46 + name.length, 12); end.writeUInt32LE(30 + name.length + packed.length, 16);
+  return Buffer.concat([local, name, packed, central, name, end]);
+}
 const rowsFile = path.join(__dirname, "rows.json");
 const rows = fs.existsSync(rowsFile) ? JSON.parse(fs.readFileSync(rowsFile, "utf8")) : fixture();
 const byId = new Map(rows.map((r) => [r.id, r]));
@@ -68,10 +90,12 @@ const enc = (s) => "=?UTF-8?B?" + Buffer.from(s).toString("base64") + "?=";
 // the part of Gmail's search language the page uses
 function matches(x, q) {
   const subj = x.subject.toLowerCase();
-  for (const [, field, val] of q.matchAll(/(?<!-)(from|to|subject):("[^"]*"|\([^)]*\)|\S+)/g)) {
+  if (q.includes("has:attachment") && !x.file && !x.pdf) return false;
+  for (const [, field, val] of q.matchAll(/(?<!-)(from|to|subject|filename):("[^"]*"|\([^)]*\)|\S+)/g)) {
     const v = val.replace(/^["(]|[")]$/g, "").toLowerCase();
     if (field === "from" && !x.from.toLowerCase().includes(v)) return false;
     if (field === "to" && !x.to.toLowerCase().includes(v)) return false;
+    if (field === "filename" && !(x.file || "").toLowerCase().includes(v)) return false;
     if (field === "subject" && !v.split(" or ").some((w) => subj.includes(w.trim().replace(/"/g, "")))) return false;
   }
   return !q.includes("in:sent") || x.sent;
@@ -134,6 +158,17 @@ async function run(browser, mode) {
     }
     if (JSON.parse(r.request().postData()).kind === "imtrustme-search") {
       const asked = JSON.parse(r.request().postData()).queries;
+      if (asked.join(" ").includes("site:solo-example.com")) {
+        return r.fulfill({ body: JSON.stringify({ ok: true, results: [{ title: "בית", link: "https://solo-example.com/", snippet: "Solo-Example בונה אתרים לעסקים." }] }), contentType: "application/json", headers });
+      }
+      if (asked.join(" ").includes("site:workplace-example.co.il")) {
+        return r.fulfill({ body: JSON.stringify({ ok: true, results: [
+          { title: "Workplace Example | LinkedIn", link: "https://il.linkedin.com/company/workplace?trk=x", snippet: "" },
+          { title: "Someone Else | LinkedIn", link: "https://il.linkedin.com/company/someone-else", snippet: "" },
+          { title: "בית", link: "https://www.workplace-example.co.il/he/about?x=1", snippet: "פיתוח מערכות מידע  לארגונים, מאז שנת 2010. ועוד משפט שנחתך באמצ..." },
+          { title: "אתר אחר", link: "https://www.other-example.co.il/workplace-example.co.il", snippet: "לא האתר" },
+        ] }), contentType: "application/json", headers });
+      }
       if (asked.join(" ").includes("חברת דוגמה")) {
         employerSearches.push(asked);
         return r.fulfill({ body: JSON.stringify({ ok: true, results: [
@@ -147,6 +182,7 @@ async function run(browser, mode) {
         { title: `${OWNER_HE} פסק דין`, link: "https://www.psakdin.co.il/Document/1", snippet: "" },
         { title: `${OWNER_HE}‏ | GitHub`, link: "https://github.com/test-owner-gh", snippet: "" },
         { title: `${OWNER_HE} אלופת ישראל בקרוספיט`, link: "https://sport-example.co.il/c", snippet: "" },
+        { title: `${OWNER_HE} פתחה סטודיו`, link: "https://local-example.co.il/b", snippet: "הסטודיו החדש בחיפה נפתח השבוע" },
         { title: "מישהו אחר לגמרי", link: "https://other-example.co.il/b", snippet: "" },
       ] }), contentType: "application/json", headers });
     }
@@ -170,7 +206,10 @@ async function run(browser, mode) {
       const all = sorted.map((x) => ({ id: x.id, threadId: x.thread })).concat(label || q ? [] : old);
       return json({ messages: all.slice(start, start + 500), nextPageToken: start + 500 < all.length ? String(start + 500) : undefined });
     }
-    if (u.pathname.includes("/attachments/")) return json({ data: Buffer.from(TEST_PDF).toString("base64url") });
+    if (u.pathname.includes("/attachments/")) {
+      const of = byId.get(u.pathname.split("/").slice(-3)[0]);
+      return json({ data: (of?.doc ? docx(of.doc) : Buffer.from(TEST_PDF)).toString("base64url") });
+    }
     const id = u.pathname.split("/").pop();
     const x = byId.get(id);
     if (u.searchParams.get("format") === "full") {
@@ -181,6 +220,7 @@ async function run(browser, mode) {
       if (x.body) parts.push({ mimeType: "text/plain", body: { data: b64(x.body) } });
       if (x.html) parts.push({ mimeType: "text/html", body: { data: b64(x.html) } });
       if (x.pdf) parts.push({ mimeType: "application/pdf", filename: "a.pdf", body: { attachmentId: "att1", size: TEST_PDF.length } });
+      if (x.file) parts.push({ mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename: x.file, body: { attachmentId: "att2", size: 2000 } });
       return json({ id, threadId: x.thread, labelIds: ["INBOX"], payload: { mimeType: "multipart/mixed", headers: [{ name: "From", value: x.from || ME }], parts } });
     }
     if (x.promo) promoRead++;
@@ -212,11 +252,18 @@ async function run(browser, mode) {
   await page.fill("#hh-name", HH_NAME);
   await page.click("#details-next");
   if (mode === "private") { await page.uncheck("#web-ok"); await page.uncheck("#ai-ok"); } // this run also proves nothing goes out without the boxes
+  // what was finished at the very moment the report screen came up
+  await page.evaluate(() => new MutationObserver(() => {
+    if (!window.__atReport && document.querySelector("#s-report.on")) window.__atReport = { complete: S.run.complete, stagesLeft: [...document.querySelectorAll("#stages li:not(.done)")].map((li) => li.dataset.k).join() };
+  }).observe(document.querySelector("#s-report"), { attributes: true }));
   await page.click("#connect");
-  await page.waitForSelector("#s-report.on", { timeout: 180000 });
-  assert(await page.isVisible("#bg-status"), "no word about the work still running");
+  // the report comes up once, after every scan and the last writing, so nothing changes while it is being read
+  await page.waitForSelector("#s-report.on", { timeout: 300000 });
+  assert.deepStrictEqual(await page.evaluate(() => window.__atReport), { complete: true, stagesLeft: "" }, "the report was shown before the work behind it finished");
+  assert((await page.textContent("#bg-status")).includes("בוטלה"), "no word that access was revoked");
+  const shownAt = await page.textContent("#rep-portrait");
   await page.evaluate(() => S.background);
-  assert.strictEqual(await page.evaluate(() => S.run.complete), true, "the background read did not finish");
+  assert.strictEqual(await page.textContent("#rep-portrait"), shownAt, "the summary changed after the report came up");
   // a final result that moves rows and changes a value: answers follow their row, and the changed row's answer is dropped
   const remap = await page.evaluate(() => {
     const original = S.result;
@@ -244,6 +291,21 @@ async function run(browser, mode) {
   assert.strictEqual(run.reads, gets - 1, "reads count"); // one rate-limit hit is retried
   assert(gets < inScope / 2, `opened ${gets} of ${inScope}: the point is not to open each mail`);
   const report = await page.evaluate(() => Object.fromEntries(S.result.groups.flatMap((g) => g.params).map((p) => [p.key, p])));
+  // a work address: the owner's own name, in any spelling, in front of an organisation's domain
+  const names = await page.evaluate(() => {
+    const own = ownNames({ name_he: "דנה כהן", name_en: null });
+    const is = (local, owner) => isOwnName(local, owner ? ownNames(owner) : own);
+    const row = (from, extra) => ({ from, to: "me@gmail.com", sent: false, real: true, ...extra });
+    const rows = [row("dana.cohen@workplace-example.co.il"), row("x@workplace-example.co.il", { real: false }), row("avi.cohen@family-example.co.il"),
+      row("dana.cohen@gmail.com"), row("dana.cohen@campus-example.ac.il"), row("hr@acme-example.com"),
+      { from: "me@gmail.com", to: "cohen_dana2@workplace-example.co.il", sent: true, real: true }];
+    return { yes: ["dana.cohen", "cohen.dana", "danacohen", "Dana_Kohen7", "דנה.כהן"].filter((x) => !is(x)),
+      no: ["dcohen", "avi.cohen", "dana", "cohen", "dana.levi", "info"].filter((x) => is(x)),
+      spellings: [["יעקב לוי", "yaakov.levy"], ["יצחק שוורץ", "itzhak.schwartz"], ["מיכל וייס", "michal.weiss"], ["חיים פרידמן", "chaim.friedman"]].filter(([he, en]) => !is(en, { name_he: he })).map((x) => x[1]),
+      short: is("al.al", { name_he: "על על" }),
+      work: workAddress(rows, { name_he: "דנה כהן" }, "me@gmail.com"), none: workAddress(rows.slice(1, 6), { name_he: "דנה כהן" }, "me@gmail.com") };
+  });
+  assert.deepStrictEqual(names, { yes: [], no: [], spellings: [], short: false, work: { domain: "workplace-example.co.il", mails: 2 }, none: null }, "own name in an address");
   if (!fs.existsSync(rowsFile)) {
     assert.notStrictEqual(report.legal.v, 0, "the legal mail found by search was missed");
     assert.strictEqual(typeof report.credit_report.v !== "undefined", true, "no credit report row");
@@ -256,6 +318,15 @@ async function run(browser, mode) {
     assert.strictEqual(report.platform_linkedin.link, "https://www.linkedin.com/in/test-owner", "own profile link");
     assert.strictEqual(await page.locator('#rep-groups a[href="https://www.linkedin.com/in/test-owner"]').count(), 1, "the link is not on the page");
     assert.strictEqual(await page.evaluate(() => S.run.pdf_read), 1, "the PDF was not read");
+    // the owner's own CV, and not the newer one passed on for someone else. Only the year of the job still held is kept
+    assert.strictEqual(await page.evaluate(() => S.run.cv_files), 2, "both Word files were opened");
+    assert.strictEqual(report.cv_current.v, "מאז 2019", "the current job from the owner's own CV: " + JSON.stringify(report.cv_current));
+    assert(!/רון לוי|מנהל מוצר|חברה אחת|אנליסטית/.test(all), "text of a CV reached the report");
+    assert.strictEqual(report.cv_sent.outcome, "found", "the row the CV conclusions hang on");
+    // with the box ticked the work and study lines go to the AI, and nothing that names or reaches the person. Without it, nothing
+    const cvSent = aiCalls.flatMap((c) => JSON.parse(c).items).filter((x) => x[2].startsWith("מתוך קורות חיים")).map((x) => x[2].slice(17));
+    if (mode === "full") assert.deepStrictEqual([...new Set(cvSent)], ["2019 - היום | מפתחת, חברה אחת", "2012 - 2019 | אנליסטית, חברה אחרת", "2022 - היום לימודי תעודה"], "the CV lines for the AI");
+    else assert.deepStrictEqual([cvSent.length, await page.evaluate(() => S.cvLines.length)], [0, 0], "CV lines kept or sent without the box");
     // the web and registries: only the participant's own name goes out, and a court page never comes back
     if (mode === "full") {
       assert.strictEqual(searches.length, 1, "web search calls");
@@ -263,11 +334,12 @@ async function run(browser, mode) {
       assert.ok(report.web_mentions.links.some((l) => l.url === "https://news-example.co.il/a"), "web mention");
       assert(!/psakdin|other-example/.test(JSON.stringify(report.web_mentions)), "court or unrelated result in the report");
       assert.ok(String(report.companies_registry.v).includes("515"), "company registry");
-      assert.strictEqual(report.platform_github.link, "https://github.com/test-owner-gh", "a profile found by web search");
-      assert.ok(report.platform_github.note.includes("מישהו אחר"), "must say it may be someone else");
+      // a profile is never looked up by name: the search returned one under the owner's name, and it is nowhere
+      assert(!(await page.evaluate(() => JSON.stringify(S.result))).includes("test-owner-gh"), "a profile found by name reached the report");
+      assert(!searches.join(" ").includes("linkedin.com/in"), "a profile was searched for by name");
       // the paragraph is added above the report; it says what the rows say and nothing about who the person is
       const para = await page.evaluate(() => portraitText());
-      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "אין בתיבה בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
+      for (const bit of ["חברת דוגמה", "80%", "campus-example.ac.il", "חוזים והסכמים", "אלופת ישראל בקרוספיט", "עדכון כתובת מגורים", "יש משכנתא", "רכישת נכס", "לא נצפו בעיות תשלום"]) assert(para.includes(bit), `paragraph lacks ${bit}: ${para}`);
       assert(!/דקדקן|יסודי|אמין|אחראי|מומלץ/.test(para), "an opinion in the paragraph: " + para);
       assert(!/הוראת קבע|מיילים על|סטרימינג/.test(para), "the dull or the descriptive in the paragraph: " + para);
       console.log("paragraph:", para);
@@ -285,7 +357,15 @@ async function run(browser, mode) {
     assert.ok(String(report.subscriptions.v).includes("saasco.io"), "recurring charges from an unknown sender: " + JSON.stringify(report.subscriptions) + " unknown:" + JSON.stringify(await page.evaluate(() => S.result.stats.by_class)));
     assert.ok(String(report.active_hours.v).includes(":00"), "active hours");
     assert.ok(/%$/.test(report.promo_share.v), "promotion share");
-    assert.strictEqual(await page.locator("#hero-tiles .tile").count(), 2, "only the response time and activity stay on top");
+    assert.strictEqual(await page.locator("#rep-hero, .tile").count(), 0, "the numbers card on top is gone; the mailbox gets one line in the summary");
+    // the fixed facts that open the summary: one to a line, said either way, and silent where there is nothing to judge by
+    const facts = await page.evaluate(() => factLines().map((l) => l.text));
+    assert.deepStrictEqual(facts, ["תיבת מייל פעילה.", "תשלום סדיר לספק אחד, חצי שנה ומעלה, ונצפו הוראות קבע.", "לא נצפו בעיות תשלום מהותיות.",
+      "לא נצפו מחלוקות, ערעורים או תלונות.", "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול.",
+      // a page with the name and the city is about this person, and goes up as it is. One with the name alone does not
+      ...(mode === "full" ? [`אזכור ברשת: ${OWNER_HE} פתחה סטודיו (local-example.co.il).`] : [])], "the fixed facts");
+    assert(!facts.slice(1).join(" ").includes("תיבה"), "a fixed fact names its source: " + facts);
+    assert.strictEqual(await page.locator("#rep-portrait .p-line").first().locator("p").count(), facts.length, "each fixed fact gets its own line");
     assert.strictEqual(report.interest_travel?.n, 4, "the travel interest must count promotions too");
     assert.strictEqual(report.interest_travel?.private, false, "an interest must not be asked in the private mode");
     const suppliers = await page.evaluate(() => S.result.suppliers);
@@ -298,6 +378,31 @@ async function run(browser, mode) {
   console.log(`${mode}: ${gets} opened, ${lists} lists, for ${inScope} mails`);
   await shot("2-report");
   assert(!FORBIDDEN.test(await page.evaluate(() => JSON.stringify(S.result.groups) + document.body.textContent)), "purpose word in the report");
+
+  // Age and marital status are read for every participant; this mailbox states neither, so no row is made up
+  assert.strictEqual(await page.evaluate(() => typeof window.ownerScan), "function", "the age and family scan did not run");
+  assert(!/מצב משפחתי/.test(await page.evaluate(() => JSON.stringify(S.result.groups))), "a marital status was made up");
+  if (mode === "full") {
+    const found = await page.evaluate(async () => {
+      const b64 = (t) => btoa(String.fromCharCode(...new TextEncoder().encode(t))).replace(/\+/g, "-").replace(/\//g, "_");
+      const OWN = "ישראלה כהן <own@example.com>";
+      const msg = (id, from, body, sent, subject = "x") => ({ id, internalDate: String(Date.UTC(2024, 5, 1)), labelIds: sent ? ["SENT"] : [],
+        payload: { mimeType: "text/plain", headers: [{ name: "From", value: from }, { name: "Subject", value: subject }], body: { data: b64(body) }, parts: [] } });
+      const box = [msg("a", "bank@example.com", "שם מלא: ישראלה כהן תאריך לידה: 01/02/1990", false),
+        msg("b", OWN, "שמי דינה לוי, אני בת 37 ומחפשת עבודה", true),
+        msg("c", OWN, "אולי בעלי יזכור בערב", true), msg("d", OWN, "כי בעלי יוכל לצאת", true), msg("e", OWN, "כולל בעלי זיקות בדוח", true),
+        msg("f", "form@example.com", "ישראלה כהן מצב משפחתי: רווק נשוי גרוש אלמן", false), msg("g", OWN, "הבן שלי חולה היום", true)];
+      const get = async (url) => (url.includes("/messages?") ? { messages: box.map((m) => ({ id: m.id })) } : box.find((m) => url.includes(`/messages/${m.id}?`)));
+      return window.ownerScan({ name_he: "ישראלה כהן" }, get, "after:2000/01/01");
+    });
+    assert.strictEqual(found.age.born, 1990, "the birth year stated next to the name was missed");
+    assert.strictEqual(found.age.stated, 0, "an age written for a friend was taken as the owner's");
+    assert.strictEqual(found.age.statedForOthers > 0, true, "the friend's age was not recognised");
+    assert.strictEqual(found.family.status, "נשואה", "marital status was missed");
+    assert.strictEqual(found.family.spouse, 2, "\"owners of\" was counted as a spouse");
+    assert.strictEqual(found.family.blankForms > 0 && found.family.forms === 0, true, "a blank form was read as an answer");
+    assert.strictEqual(found.kids.words, 1, "a child mentioned by the owner was missed");
+  }
 
   // sharing the report is the default; the other way is a small link below it
   assert.strictEqual(await page.locator("#s-choose").count(), 0, "the choice screen is back");
@@ -353,14 +458,30 @@ async function run(browser, mode) {
     // the top of the report: conclusions by topic, the workplace, and real links
     const top = await page.textContent("#rev-portrait .portrait-top");
     assert(top.includes("עבודה בהיקף חלקי") && top.includes("התאגדה ב-2005"), "the conclusions on top: " + top);
+    // the mailbox line opens the conclusions, never goes to the AI, and goes down with the row it rests on
+    assert(top.trim().startsWith("עובדות") && top.includes("תיבת מייל פעילה"), "the fixed facts on top: " + top);
+    assert(!/תיבת מייל|נצפו הודעות על הליך|לא נצפו מחלוקות/.test(aiCalls.join(" ")), "a line that is the person's own business went to the AI");
+    await page.uncheck(`${row("sent_per_week")} [data-show]`);
+    assert(!(await page.textContent("#rev-portrait .portrait-top")).includes("תיבת מייל"), "the mailbox line outlived its row");
+    await page.check(`${row("sent_per_week")} [data-show]`);
     const hrefs = await page.$$eval("#rev-portrait .portrait-links a", (a) => a.map((x) => x.href));
     assert(hrefs.includes("https://www.dugma-example.co.il/"), "the employer's site: " + hrefs);
     assert(hrefs.includes("https://il.linkedin.com/company/dugma-example"), "the employer's LinkedIn: " + hrefs);
-    assert(hrefs.some((h) => h.includes("github.com/test-owner-gh")), "the participant's network link: " + hrefs);
+    assert(hrefs.includes("https://www.linkedin.com/in/test-owner"), "the profile link from the participant's own mail: " + hrefs);
+    assert(!hrefs.some((h) => h.includes("test-owner-gh")), "a profile found by name among the links: " + hrefs);
     assert.strictEqual(employerSearches.length, 1, "employer searches");
-    assert.strictEqual(await page.evaluate(() => bestProfile([{ url: "a", text: "דנה כהן - Analyst" }, { url: "b", text: "דנה כהן at חברת דוגמה" }], "חברת דוגמה")), "b", "the profile that mentions the workplace");
+    // a workplace known only by its domain: its own site and its own words, and no other page that merely mentions it
+    const byDomain = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("workplace-example.co.il"); const got = S.employer; S.employer = kept; return got; });
+    const about = "פיתוח מערכות מידע לארגונים, מאז שנת 2010";
+    assert.deepStrictEqual(byDomain, { name: "Workplace Example", lead: about, snippet: about, note: "מחיפוש ברשת", links: [
+      { text: "האתר של Workplace Example", url: "https://www.workplace-example.co.il" },
+      { text: "Workplace Example ב-LinkedIn", url: "https://il.linkedin.com/company/workplace" }] }, "the workplace from its domain");
+    const solo = await page.evaluate(async () => { const kept = S.employer; S.employer = null; await lookupByDomain("solo-example.com"); const got = S.employer; S.employer = kept; return got; });
+    assert.deepStrictEqual([solo.name, solo.lead, solo.links.length], ["Solo-Example", "Solo-Example בונה אתרים לעסקים", 1], "the name as the site itself spells it");
     assert.strictEqual(await page.evaluate(() => hasAllWords("Dana Cohen‏ - ‏Data Engineer", "Dana Cohen")), true, "direction marks in a title");
     assert(!/maccabi|friend@/.test(aiCalls.join(" ")), "an excluded or personal sender went to AI");
+    assert(!/הצעות שנבחרו|New jobs for you/.test(aiCalls.join(" ")), "a job alert went to the AI");
+    assert(aiCalls.join(" ").includes("תודה על פנייתך"), "an answer to an application is not an alert");
     assert(!(await page.textContent("#rev-portrait")).includes("אמין"), "an opinion from the AI reached the page");
     assert.strictEqual(await page.evaluate(() => S.ai.length), 1, "only the valid AI sentence stays");
     // blacking out a row takes the conclusion built on it, so it can't come back through the AI

@@ -54,12 +54,13 @@ NOTHING_FOUND = (0, "לא נמצא", "לא זוהה")
 
 
 INTEREST_KEYS: dict[str, str] = {}  # label -> key, for this run
+FACTS_TOPIC = "עובדות"  # the fixed lines that open the summary; app.js keeps them on top by this name
 # Findings for the person's own interest. Not asked row by row when the report isn't shared: nobody can confirm a median
 BONUS = {"מיילים בכל התיבה": "mailbox_total", "מיילים לפי שנה": "per_year", "חברות וגופים שכתבו לך": "companies",
               "חלק הפרסומות בתיבה": "promo_share", "מיילים שלא נקראו": "unread", "זמן התגובה החציוני שלך": "reply_time",
               "השעות שבהן את/ה שולח/ת הכי הרבה": "active_hours", "מיילים ששלחת בשבוע": "sent_per_week",
-         "מיילים על חיפוש עבודה": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
-         "היקף משרה": "job_scope", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
+         "מיילים על משרות ומועמדות": "job_search", "מיילים על טיסות": "flights", "יעדי טיסה": "destinations",
+         "היקף משרה": "job_scope", "משרה נוכחית לפי קורות חיים": "cv_current", "קורות חיים ששלחת": "cv_sent", "מוסד אקדמי בתיבה": "academic", "מיילים על הוראות קבע": "standing_orders",
          "מיילים ששלחת על חוזים": "contracts_sent", "מיילים על מעבר מגורים": "moving", "מיילים על רכישת נכס": "property_docs",
          "אזכורים ברשת": "web_mentions", "רישיונות במאגרים ציבוריים": "licenses", "חברות על השם שלך": "companies_registry", "מיילים על הזמנות ומשלוחים": "orders",
                 "קורסים, כנסים והרצאות": "learning", "מיילים על חוזים והסכמים": "contracts", "ערעורים ותלונות ששלחת": "disputes",
@@ -106,6 +107,11 @@ def P(v, ms=(), n=None, note=None):
 
 def NA(why):
     return {"v": None, "n": None, "span": "", "why": why, "note": None}
+
+
+JOB_BOARDS = ("drushim.co.il", "alljobs.co.il", "jobmaster.co.il", "jobinfo.co.il", "glassdoor.com", "indeed.com", "ziprecruiter.com")
+JOB_ALERT = re.compile(r"משרות חדשות|משרות ש?מתאימות|משרות עבורך|משרות בשבילך|התראת משרות|סוכן (?:חכם|משרות)|job alerts?|new jobs|jobs? for you|"
+                       r"jobs you may|recommended jobs|is hiring|are hiring", re.I)
 
 
 def name_variants(full: str) -> list[str]:
@@ -242,7 +248,14 @@ def run(payload_json: str) -> str:
         repeat = max(months, key=lambda d: len(months[d]), default=None)
         if repeat and len(months[repeat]) >= 2:
             employer = [m for m in msgs if m.domain == repeat]
-    pension = [m for m in readable if PENSION.search(m.subject)]
+    by_address = False
+    work_domain = (p.get("work_address") or {}).get("domain")
+    if not employer and work_domain:  # an address in the owner's own name at an organisation: that is where they work
+        at_work = [m for m in msgs if m.domain == work_domain or m.domain.endswith("." + work_domain)]
+        # an address kept from a former workplace goes quiet, so mail in the last year is what makes it the current one
+        if at_work and months_between(max(m.sent_at for m in at_work), p["today"]) <= 13:
+            employer, by_address = at_work, True
+    pension =[m for m in readable if PENSION.search(m.subject)]
 
     # ---- identity
     gate_he = {"own": "על שמך", "household": "על שם בן/בת הבית שהצהרת עליו/ה", "other": "על שם אחר",
@@ -260,13 +273,10 @@ def run(payload_json: str) -> str:
     for name, doms in PLATFORMS:
         ms = [m for m in msgs if m.direction == "in" and any(m.domain == d or m.domain.endswith("." + d) for d in doms)]
         link = (p.get("read_out") or {}).get("links", {}).get(name)
-        found_online = None if link else (p.get("outside") or {}).get("web_links", {}).get(name)
-        if len(ms) >= 5 or link or found_online:
+        if len(ms) >= 5 or link:  # only what the mailbox itself shows: a profile is never looked up by name
             row = P("חשבון קיים על הכתובת המחוברת", ms)
-            if link or found_online:
-                row["v"], row["link"] = (link or found_online).split("//")[1].removeprefix("www."), link or found_online
-            if found_online:
-                row["note"] = "נמצא בחיפוש לפי השם, ייתכן שזה מישהו אחר"
+            if link:
+                row["v"], row["link"] = link.split("//")[1].removeprefix("www."), link
             plat_rows.append((name, row))
     own_bills = [m for m in billing if m.holder == "owner"]
     hh_rels = [e for e in rel if e.holder == "household"]
@@ -319,7 +329,8 @@ def run(payload_json: str) -> str:
             ("בנק לפי מיילים", P(", ".join(bank_names) if banks else "לא זוהה", banks)),
         ]),
         ("עבודה והכנסה", [
-            ("מעסיק לפי מיילים", P(employer[0].org_he or employer[0].domain, employer) if employer else
+            ("מעסיק לפי מיילים", P(employer[0].org_he or (work_domain if by_address else employer[0].domain), employer,
+                                   note="כתובת על שמך אצל הארגון" if by_address else None) if employer else
              (P(", ".join(k for k, _ in slip_from.most_common(2)), slips, note="לפי שולח התלושים") if slips
               else NA("המעסיק לא מוכר עדיין למנוע"))),
             ("ותק לפי מיילים מהמעסיק", P(f"מ-{ym(min(m.sent_at for m in employer))}", employer) if employer
@@ -410,7 +421,7 @@ def run(payload_json: str) -> str:
         ]
         rest = [
             ("מה עולה מהנושאים", [
-                ("מיילים על חיפוש עבודה", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
+                ("מיילים על משרות ומועמדות", life_row("job_search")), ("מיילים על טיסות", life_row("flights")),
                 ("יעדי טיסה", fact(", ".join(ro.get("destinations") or []) or 0, len(ro.get("destinations") or []))),
                 ("מיילים על הזמנות ומשלוחים", life_row("orders")), ("קורסים, כנסים והרצאות", life_row("learning")),
                 ("מיילים על חוזים והסכמים", life_row("contracts")), ("מיילים ששלחת על חוזים", life_row("contracts_sent")),
@@ -443,6 +454,12 @@ def run(payload_json: str) -> str:
     work_rows = next(rows for t, rows in groups if t == "עבודה והכנסה")
     if ro.get("job_scope"):
         work_rows.append(("היקף משרה", fact(f"{ro['job_scope']['pct']}%", ro["job_scope"]["mails"], note="מתוך תלושים שנקראו")))
+    if ro.get("cv"):  # a month and a year: the file itself never reaches the engine
+        cv_sent = ym(ro["cv"]["sent"] + "-01")
+        work_rows.append(("קורות חיים ששלחת", fact(f"ב-{cv_sent}", 1)))
+        if ro["cv"].get("current_since"):
+            work_rows.append(("משרה נוכחית לפי קורות חיים", fact(f"מאז {ro['cv']['current_since']}", 1,
+                                                              note=f"קורות חיים שנשלחו ב-{cv_sent}")))
     two_years_ago = f"{int(today[:4]) - 2}{today[4:]}"
     academic = Counter(m.domain for m in readable if m.direction == "in" and m.domain.endswith(".ac.il") and m.sent_at >= two_years_ago)
     if sum(academic.values()) >= 3:
@@ -461,8 +478,65 @@ def run(payload_json: str) -> str:
 
     portrait = []
 
-    def say(label, text, join=None, url=None):
-        portrait.append({"label": label, "text": text, **({"join": join} if join else {}), **({"url": url} if url else {})})
+    def say(label, text, join=None, url=None, needs=(), topic=None, ai=True):
+        portrait.append({"label": label, "text": text, **({"join": join} if join else {}), **({"url": url} if url else {}),
+                         **({"needs": list(needs)} if needs else {}), **({"topic": topic} if topic else {}),
+                         **({} if ai else {"ai": False})})
+
+    def fixed(label, text, needs=(), ai=True):
+        say(label, text, needs=needs, topic=FACTS_TOPIC, ai=ai)
+
+    def checked(label):  # the row exists and could be checked, so "nothing in the mailbox" may be said
+        return label in every_row and every_row[label]["v"] is not None
+
+    # ---- the facts that open the summary, one to a line and in a fixed order. Each says what is in the mailbox or is not,
+    # and where the mailbox has nothing to judge by, the line is left out: silence is not a finding. The wording never names
+    # the mailbox as the source ("לא נצפו", not "אין בתיבה"): whoever reads the summary is not told where a fact came from
+    # The mailbox itself: the person sends from it every week, and whose names the organisations use in it. It rests on
+    # several rows, and blacking out any of them takes the line down. It carries first names, so it never goes to the AI
+    sends_weekly = bool(ins.get("sent")) and ins["sent"] / ins["weeks"] >= 1
+    shared = bool(hh) and (by_holder["household"] >= 3 or gate == "household")
+    if sends_weekly or shared:
+        rests_on = (["מיילים ששלחת בשבוע"] if sends_weekly else []) + (
+            ["למי גופים פונים בתיבה", "חשבונות על שם " + hh["name"], "חשבון ה-Gmail שחובר"] if shared else [])
+        both = f"משותפת ל{owner['name_he'].split()[0]} ול{hh['name'].split()[0]}" if shared else ""
+        fixed(rests_on[0], ", ".join(x for x in ("תיבת מייל פעילה" if sends_weekly else "תיבת מייל", both) if x) + ".",
+              needs=rests_on[1:], ai=False)
+    # regular payments and standing orders: always said, either way
+    paying, orders = "ספקים בתשלום קבוע (6 חודשים ומעלה)", "מיילים על הוראות קבע"
+    n_paying = (has(paying) or {}).get("v") or 0
+    paid = (f"תשלומים סדירים ל-{n_paying} ספקים, חצי שנה ומעלה" if n_paying > 1
+            else "תשלום סדיר לספק אחד, חצי שנה ומעלה" if n_paying else "")
+    fixed(paying, (", ו".join(x for x in (paid, "נצפו הוראות קבע" if has(orders) else "") if x)
+                   or "לא נצפו תשלומים קבועים או הוראות קבע") + ".", needs=[orders])
+    problems = "בעיות תשלום מהותיות בכל התקופה"
+    if has(problems):
+        fixed(problems, "נצפו בעיות תשלום מהותיות.")
+    elif problems in every_row and n_paying:  # only with bills to judge by
+        fixed(problems, "לא נצפו בעיות תשלום מהותיות.")
+    # disputes and legal proceedings are the person's own business: said to them, never handed to the AI to build on
+    disputes = "ערעורים ותלונות ששלחת"
+    if has(disputes):
+        fixed(disputes, "נצפו ערעורים או תלונות.", ai=False)
+    elif checked(disputes):
+        fixed(disputes, "לא נצפו מחלוקות, ערעורים או תלונות.", ai=False)
+    legal = "הליך משפטי, הוצאה לפועל או עיקול"
+    if has(legal):
+        fixed(legal, "נצפו הודעות על הליך משפטי, הוצאה לפועל או עיקול.", ai=False)
+    elif checked(legal):
+        fixed(legal, "לא נצפו עיקול, הוצאה לפועל או הליך משפטי.", ai=False)
+    alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
+    if has(alerts):
+        fixed(alerts, "נצפו התראות מהבנק.")
+    elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
+        fixed(alerts, "לא נצפו התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
+    if has("חיסכון פנסיוני פעיל"):
+        fixed("חיסכון פנסיוני פעיל", "קיים חיסכון פנסיוני פעיל.")
+    # A page that names the person together with their city or workplace is about them, so it is said as it is. One that
+    # carries the name alone may be about someone else, and stays below with that said
+    tied_mentions = [m for m in out.get("mentions") or [] if m.get("tied")][:2]
+    for m in tied_mentions:
+        fixed("אזכורים ברשת", f"אזכור ברשת: {m['text']}.", ai=False)
 
     if r := has("עיר מגורים לפי חשבונות"):
         say("עיר מגורים לפי חשבונות", f"מגורים ב{r['v']}.")
@@ -475,25 +549,15 @@ def run(payload_json: str) -> str:
     if has("מיילים על רכישת נכס"):
         say("מיילים על רכישת נכס", "מסמכים על רכישת נכס.")
     if (r := has("מעסיק לפי מיילים")) and "שולח" not in (r.get("note") or ""):  # the sender of the slips may be a payroll firm
-        say("מעסיק לפי מיילים", f"עבודה ב{r['v']}.")
+        say("מעסיק לפי מיילים", f"עבודה ב{'-' if re.match('[A-Za-z0-9]', str(r['v'])) else ''}{r['v']}.")
     if r := has("ותק לפי מיילים מהמעסיק"):
         say("ותק לפי מיילים מהמעסיק", f"עבודה שם {r['v'].replace('מ-', 'לפחות מ-', 1)}.")
     if r := has("היקף משרה"):
         say("היקף משרה", f"היקף משרה של {r['v']}.")
+    if r := has("משרה נוכחית לפי קורות חיים"):
+        say("משרה נוכחית לפי קורות חיים", f"משרה נוכחית {r['v']}, לפי קורות חיים.")
     if r := has("מוסד אקדמי בתיבה"):
         say("מוסד אקדמי בתיבה", f"קשר בשנתיים האחרונות עם מוסד אקדמי: {r['v']}.")
-    if has("חיסכון פנסיוני פעיל"):
-        say("חיסכון פנסיוני פעיל", "חיסכון פנסיוני פעיל.")
-    alerts = "התראות בנק: חשבון מוגבל, שיק חזר, חריגה"
-    if has(alerts):
-        say(alerts, "יש בתיבה התראות מהבנק.")
-    elif banks and alerts in every_row:  # only when mail from a bank exists; otherwise the silence says nothing
-        say(alerts, "אין בתיבה התראות מהבנק על שיק שחזר, חריגה או הגבלת חשבון.")
-    problems = "בעיות תשלום מהותיות בכל התקופה"
-    if has(problems):
-        say(problems, "יש בתיבה בעיות תשלום מהותיות.")
-    elif problems in every_row and has("ספקים בתשלום קבוע (6 חודשים ומעלה)"):  # only with bills to judge by
-        say(problems, "אין בתיבה בעיות תשלום מהותיות.")
     if has("מיילים ששלחת על חוזים", 2):
         say("מיילים ששלחת על חוזים", "התכתבות יוצאת על חוזים והסכמים.")
     if has("קורסים, כנסים והרצאות", 3):
@@ -505,9 +569,9 @@ def run(payload_json: str) -> str:
             say(label, label, join="תחומי עניין")
     for label, r in plat_rows:
         if r.get("link"):
-            say(label, label + (" (לפי השם)" if r.get("note") else ""), join="חשבונות ברשת", url=r["link"])
+            say(label, label, join="חשבונות ברשת", url=r["link"])
     for m in out.get("mentions") or []:
-        if re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
+        if m not in tied_mentions and re.search(r"אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner", m["text"], re.I):
             say("אזכורים ברשת", f"אזכור ברשת, לפי השם בלבד: {m['text']}.")
     if r := has("רישיונות במאגרים ציבוריים"):
         say("רישיונות במאגרים ציבוריים", f"במאגרים הציבוריים, לפי השם בלבד: {r['v']}.")
@@ -516,17 +580,21 @@ def run(payload_json: str) -> str:
 
     topics = {"מגורים": ("עיר מגורים לפי חשבונות", "גר/ה שם", "עדכון כתובת ברשות האוכלוסין", "מיילים על מעבר מגורים", "משכנתא",
                          "מיילים על רכישת נכס", "חשבונות שוטפים: חשמל, גז, מים, תקשורת"),
-              "עבודה ולימודים": ("מעסיק לפי מיילים", "ותק לפי מיילים מהמעסיק", "היקף משרה", "מוסד אקדמי בתיבה",
+              "עבודה ולימודים": ("מעסיק לפי מיילים", "ותק לפי מיילים מהמעסיק", "היקף משרה", "משרה נוכחית לפי קורות חיים", "מוסד אקדמי בתיבה",
                                  "מיילים ששלחת על חוזים", "קורסים, כנסים והרצאות"),
-              "כספים": ("חיסכון פנסיוני פעיל", "מיילים על הוראות קבע", alerts, "הקשר הארוך ביותר עם ספק", problems),
+              "כספים": ("הקשר הארוך ביותר עם ספק",),
               "פנאי": ("יעדי טיסה",)}
     for x in portrait:
+        if x.get("topic"):  # the fixed facts already have theirs, and are always shown
+            x["main"] = True
+            continue
         x["main"] = x["label"] in ("עיר מגורים לפי חשבונות", "עדכון כתובת ברשות האוכלוסין", "משכנתא", "מעסיק לפי מיילים", "היקף משרה",
-                                   "מוסד אקדמי בתיבה", problems) or x.get("join") == "תחומי עניין"
+                                   "מוסד אקדמי בתיבה") or x.get("join") == "תחומי עניין"
         x["topic"] = next((t for t, labels in topics.items() if x["label"] in labels),
                           "פנאי" if x.get("join") == "תחומי עניין" else "ברשת")
-    # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name
-    ai_facts = [{"label": x["label"], "text": x["text"]} for x in portrait if x["topic"] != "ברשת"]
+    # what the AI may use besides subjects: facts from the mailbox, not what a name search found about someone of that name,
+    # and not the lines marked as the person's own business
+    ai_facts = [{"label": x["label"], "text": x["text"]} for x in portrait if x["topic"] != "ברשת" and x.get("ai", True)]
 
     # ---- what the AI paragraph may see: subjects from businesses only, with whatever identifies someone taken out. `readable`
     # already leaves out personal senders and excluded sectors. A stranger's name inside a subject can't be recognised here
@@ -551,11 +619,16 @@ def run(payload_json: str) -> str:
             out += layer
             i += 1
 
+    # A job alert is a mailing list: it says a person once signed up to a job site, not that they are looking for work
+    # now. Left in, hundreds of them read as a job hunt. An answer to an application is not an alert, and stays
+    def job_alert(m):
+        return any(m.domain == d or m.domain.endswith("." + d) for d in JOB_BOARDS) or JOB_ALERT.search(m.subject)
+
     seen_subjects, by_quarter = set(), {}
     for m in sorted(readable, key=lambda x: x.sent_at, reverse=True):
         text = bare(m.subject)
         who = m.org_he or m.domain
-        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects:
+        if len(text) >= 4 and "פרסומת" not in text and (who, text) not in seen_subjects and not job_alert(m):
             seen_subjects.add((who, text))
             quarter = (m.sent_at[:4], (int(m.sent_at[5:7]) - 1) // 3)
             by_quarter.setdefault(quarter, {}).setdefault(who, []).append({"d": m.sent_at[:7], "o": who, "s": text[:160]})

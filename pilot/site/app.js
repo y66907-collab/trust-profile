@@ -14,7 +14,7 @@ const PLATFORM_DOMAINS = ["linkedin.com", "facebookmail.com", "facebook.com", "i
 const INTERESTS = [
   { key: "fitness", label: "כושר וספורט", domains: ["crossfit.com", "trainheroic.com", "myprotein.com", "strava.com", "garmin.com"] },
   { key: "tech", label: "טכנולוגיה ו-AI", domains: ["github.com", "supabase.com", "vercel.com", "anthropic.com", "openai.com", "bubble.io", "pipedream.com", "zoom.us", "cursor.com"] },
-  { key: "career", label: "קריירה וחיפוש עבודה", domains: ["greenhouse-mail.io", "comeet.co", "lever.co", "workablemail.com", "alljobs.co.il", "drushim.co.il", "glassdoor.com"] },
+  { key: "career", label: "אתרי משרות וגיוס", domains: ["greenhouse-mail.io", "comeet.co", "lever.co", "workablemail.com", "alljobs.co.il", "drushim.co.il", "glassdoor.com"] },
   { key: "travel", label: "נסיעות וטיסות", domains: ["booking.com", "airbnb.com", "ryanair.com", "elal.co.il", "skygini.com", "skyscanner.com", "issta.co.il", "wizzair.com", "easyjet.com", "expedia.com", "agoda.com"] },
   { key: "shopping", label: "קניות אונליין", domains: ["amazon.com", "aliexpress.com", "ebay.com", "ksp.co.il", "ivory.co.il", "shein.com", "next.co.il", "email.apple.com", "samsung.com"] },
   { key: "entertainment", label: "מוזיקה וסטרימינג", domains: ["netflix.com", "spotify.com", "disneyplus.com", "apple.com"] },
@@ -243,6 +243,61 @@ function decodeWords(s) {
 const addrOf = (s) => ((s || "").match(/[\w.+'-]+@[\w.-]+\.\w+/) || [""])[0].toLowerCase();
 const nameOf = (s) => decodeWords((s || "").replace(/<[^>]*>/, "")).replace(/["']/g, "").trim();
 
+// ---------------------------------------------------------------- the owner's own name, in any spelling
+// A name is compared by its consonants, so the Hebrew someone typed meets whatever English spelling an address carries.
+// A Hebrew letter that English writes in two ways gives two readings, and any one of them is enough
+const HE_CONSONANTS = { "ב": ["b"], "ג": ["g"], "ד": ["d"], "ו": ["", "b"], "ז": ["z"], "ט": ["t"], "כ": ["k", ""], "ך": ["k", ""], "ל": ["l"], "מ": ["m"], "ם": ["m"],
+  "נ": ["n"], "ן": ["n"], "ס": ["s"], "פ": ["p"], "ף": ["p"], "צ": ["ts"], "ץ": ["ts"], "ק": ["k"], "ר": ["r"], "ש": ["s"], "ת": ["t"] };
+const squeeze = (s) => s.replace(/(.)\1+/g, "$1");
+function skeletons(word) {
+  const w = String(word || "").toLowerCase().replace(/[^a-zא-ת]/g, "");
+  if (!/[א-ת]/.test(w)) {
+    const t = w.replace(/^j/, "y").replace(/sh/g, "s").replace(/tz/g, "ts").replace(/ch|kh/g, "").replace(/ph/g, "p").replace(/th/g, "t")
+      .replace(/[cq]/g, "k").replace(/x/g, "ks").replace(/f/g, "p").replace(/[vw]/g, "b");
+    return [squeeze(t[0] === "y" ? "y" + t.slice(1).replace(/[aeiouhy]/g, "") : t.replace(/[aeiouhy]/g, ""))];
+  }
+  let out = [""];
+  [...w].forEach((c, i) => {
+    const ways = c === "י" ? (i === 0 ? ["y", ""] : [""]) : HE_CONSONANTS[c] || [""];
+    out = out.flatMap((s) => ways.map((x) => s + x)).slice(0, 16);
+  });
+  return [...new Set(out.map(squeeze))];
+}
+// First name and family name, each as the set of its readings
+function ownNames(owner) {
+  const first = new Set(), last = new Set();
+  for (const full of [owner.name_he, owner.name_en]) {
+    const words = String(full || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) continue;
+    skeletons(words[0]).forEach((s) => first.add(s));
+    skeletons(words.slice(1).join("")).forEach((s) => last.add(s));
+  }
+  return { first, last };
+}
+// Both names have to be there, so a relative who shares the family name is not taken for the owner: an initial is not a
+// name. And a pair of names with too few consonants to tell people apart is not compared at all
+function isOwnName(text, names) {
+  const words = String(text || "").toLowerCase().split(/[^a-zא-ת]+/).filter(Boolean);
+  const pairs = [...names.first].flatMap((f) => [...names.last].map((l) => [f, l])).filter(([f, l]) => f && l && f.length + l.length >= 4);
+  if (!pairs.length || !words.length) return false;
+  if (words.length === 1) return pairs.some(([f, l]) => skeletons(words[0]).some((s) => s === squeeze(f + l) || s === squeeze(l + f)));
+  return words.some((w, i) => w.length >= 2 && pairs.some(([f, l]) => skeletons(w).includes(f) && skeletons(words.filter((_, j) => j !== i).join("")).includes(l)));
+}
+// A work address: the owner's own name in front of an organisation's domain, on mail that came in or went out. A mailbox
+// service is not a workplace, and neither is a place of study, where every student gets an address
+const NOT_A_WORKPLACE = /(^|\.)(ac\.[a-z]{2}|edu|edu\.[a-z]{2}|k12\.[a-z]{2})$/;
+function workAddress(rows, owner, own) {
+  const names = ownNames(owner), seen = {};
+  for (const r of rows) {
+    if (!r.real) continue; // only an opened mail carries the whole address
+    const [local, domain] = String(r.sent ? r.to : r.from).split("@");
+    if (!domain || `${local}@${domain}` === own || PERSONAL_DOMAINS.includes(domain) || NOT_A_WORKPLACE.test(domain) || !isOwnName(local, names)) continue;
+    seen[domain] = (seen[domain] || 0) + 1;
+  }
+  const [domain, mails] = Object.entries(seen).sort((a, b) => b[1] - a[1])[0] || [];
+  return domain ? { domain, mails } : null;
+}
+
 function stage(k, state, n) {
   const li = $(`#stages [data-k="${k}"]`);
   li.classList.remove("now", "done");
@@ -261,6 +316,8 @@ const READ_TOPICS = {
   work: { q: 'subject:("תלוש שכר" OR "תלוש משכורת" OR "אישור העסקה" OR "טופס 106" OR payslip)', max: 15, pdf: true },
   flights: { q: 'subject:(טיסה OR "boarding pass" OR itinerary OR "כרטיס טיסה") -subject:(פרסומת OR מבצע OR הגרלה)', max: 25, pdf: false },
 };
+// A CV the person sent themselves. Each is its own search, since a file name and a subject cannot share one
+const CV_QUERIES = ["filename:cv", "filename:resume", "filename:קורות", "filename:קוח", 'subject:"קורות חיים"', "subject:cv", "subject:resume"].map((q) => `in:sent has:attachment ${q}`);
 const SOCIAL = [
   ["LinkedIn", "from:linkedin.com", /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/comm\/in\/([A-Za-z0-9%_-]+)\?[^"'\s]*trk=[^"'\s]*header-0-profile_glimmer/, (u) => `https://www.linkedin.com/in/${u}`],
   ["Instagram", "from:instagram.com", /instagram\.com\/_n\/user\?[^"']*?username=([A-Za-z0-9._]+)[^"']*?click_source=(?:header|footer)_profile_pic/, (u) => `https://www.instagram.com/${u}`],
@@ -319,8 +376,105 @@ async function pdfText(data) {
   return text;
 }
 
+// ---------------------------------------------------------------- reading a CV
+// A Word file is a zip: only the document itself and its page headers are unpacked, with what the browser already has
+const fileBytes = (data) => Uint8Array.from(atob(data.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function inflate(bytes) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+}
+async function docxText(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = bytes.length - 22;
+  while (end >= 0 && v.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error("not a zip");
+  let p = v.getUint32(end + 16, true);
+  const parts = [];
+  for (let i = 0; i < v.getUint16(end + 10, true); i++) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true), nameLen = v.getUint16(p + 28, true), at = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    if (/^word\/(document|header\d*)\.xml$/.test(name)) {
+      const start = at + 30 + v.getUint16(at + 26, true) + v.getUint16(at + 28, true);
+      const raw = bytes.subarray(start, start + size);
+      const xml = new DOMParser().parseFromString(new TextDecoder().decode(method === 8 ? await inflate(raw) : raw), "application/xml");
+      const lines = [...xml.getElementsByTagName("w:p")].map((x) => [...x.getElementsByTagName("w:t")].map((t) => t.textContent).join("")).filter((l) => l.trim());
+      parts[name === "word/document.xml" ? "push" : "unshift"](lines.join("\n")); // the page header first: a name often sits there
+    }
+    p += 46 + nameLen + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
+  }
+  return parts.join("\n");
+}
+// A PDF as lines: the pieces of one line share a height on the page
+async function pdfLines(bytes) {
+  await loadPdf();
+  const doc = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  const out = [];
+  for (let i = 1; i <= Math.min(doc.numPages, 6); i++) {
+    const byHeight = new Map();
+    for (const it of (await (await doc.getPage(i)).getTextContent()).items) {
+      if (!it.str.trim()) continue;
+      const y = Math.round(it.transform[5] / 3);
+      if (!byHeight.has(y)) byHeight.set(y, []);
+      byHeight.get(y).push(it);
+    }
+    for (const y of [...byHeight.keys()].sort((a, b) => b - a)) {
+      // Hebrew runs from the right, so the pieces of a Hebrew line are taken from the right
+      const row = byHeight.get(y), rtl = row.some((x) => /[א-ת]/.test(x.str));
+      out.push(row.sort((a, b) => (rtl ? b.transform[4] - a.transform[4] : a.transform[4] - b.transform[4])).map((x) => x.str).join(" ").replace(/\s+/g, " ").trim());
+    }
+  }
+  await doc.destroy();
+  return out.join("\n");
+}
+const CV_WORDS = /ניסיון|נסיון|השכלה|תעסוקה|לימודים|כישורים|מיומנויות|experience|education|employment|skills/gi;
+// A Hebrew PDF may keep each word backwards: the reading with more known words is the right one
+function readable(text) {
+  const flipped = text.split("\n").map((l) => l.split(/(\s+)/).map((w) => (/[א-ת]/.test(w) ? [...w].reverse().join("") : w)).join("")).join("\n");
+  return (flipped.match(CV_WORDS) || []).length > (text.match(CV_WORDS) || []).length ? flipped : text;
+}
+// The owner's first and family name close together in a text: how a CV opens. One of the two alone is someone else
+function ownNameIn(text, names) {
+  const words = String(text || "").toLowerCase().match(/[a-zא-ת]+/g) || [];
+  const pairs = [...names.first].flatMap((f) => [...names.last].map((l) => [f, l])).filter(([f, l]) => f && l && f.length + l.length >= 4);
+  const keys = words.map((w) => (w.length >= 2 ? skeletons(w) : []));
+  return words.some((_, i) => pairs.some(([f, l]) => keys[i].includes(f) &&
+    [1, 2, 3].some((d) => [i - d, i + d].some((j) => keys[j]?.includes(l) || (keys[j] && keys[j + 1] && skeletons(words[j] + words[j + 1]).includes(l))))));
+}
+// Only years are taken from a CV. What a job was, and where, is written in too many ways for a rule to read it right
+const CV_NOW = "היום|כיום|עכשיו|הווה|today|present|current|now";
+const CV_RANGE = new RegExp(`(?:\\d{1,2}[./])?((?:19|20)\\d\\d)\\s*(?:[-–—]|עד|to)\\s*(?:\\d{1,2}[./])?((?:19|20)\\d\\d|${CV_NOW})`, "i");
+const CV_SECTIONS = [["work", /ניסיון|נסיון|תעסוקה|קריירה|experience|employment|career/i], ["study", /השכלה|לימודים|education|academic/i],
+  ["other", /מיומנויות|כישורים|skills|שפות|languages|התנדבות|volunteer|צבא|שירות לאומי|military|summary|תקציר|פרויקטים|projects|tools/i]];
+// The work and study parts of a CV, for the AI and only with the person's tick. Nothing that names or reaches the person
+// comes along: the top of the file is never taken, and a line with a contact detail, a long number or family matters is dropped
+const CV_PRIVATE = /@|https?:|www\.|\d{5,}|\d{2,3}[- ]\d{3}[- ]?\d{4}|ת\.?ז\.?|תעודת זהות|תאריך לידה|יליד|נשוי|נשואה|רווק|גרוש|ילדים|אמא ל|אבא ל|born|married|רחוב|רח'|כתובת|address/i;
+function cvLines(text, names) {
+  const out = [];
+  let section = null;
+  for (const line of text.split("\n").map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean)) {
+    const heading = line.length < 45 && !CV_RANGE.test(line) && CV_SECTIONS.find(([, rx]) => rx.test(line));
+    if (heading) { section = heading[0]; continue; }
+    if ((section !== "work" && section !== "study") || CV_PRIVATE.test(line) || ownNameIn(line, names)) continue;
+    out.push(line.slice(0, 165));
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+function cvCurrentSince(text) {
+  let section = null, since = null;
+  const thisYear = new Date().getFullYear();
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const range = CV_RANGE.exec(line);
+    const heading = line.length < 45 && !range && CV_SECTIONS.find(([, rx]) => rx.test(line));
+    if (heading) { section = heading[0]; continue; }
+    if (!range || /^\d/.test(range[2]) || (section && section !== "work")) continue; // a job that is still going on
+    const from = Number(range[1]);
+    if (from >= 1960 && from <= thisYear && (since === null || from > since)) since = from;
+  }
+  return since;
+}
+
 async function readRelevant(search, pool, drop, senders) {
-  const out = { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 };
+  const out = { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0, cv_files: 0 };
   const [rules, hashes] = await Promise.all(["rules", "excluded_hashes"].map((f) => fetch(`engine/${f}.json`).then((r) => r.json())));
   const hidden = new Set(hashes.sha256);
   const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -392,6 +546,29 @@ async function readRelevant(search, pool, drop, senders) {
   const [employer, employerN] = Object.entries(employers).sort((a, b) => b[1] - a[1])[0] || [];
   if (employerN >= 2) out.employer = { name: employer, mails: employerN };
 
+  // The person's own CV: the newest file they sent that opens with their own name. One they passed on for someone else
+  // fails that check. The engine gets two things: since when the current job, and when the file was sent. With the AI
+  // box ticked, the work and study lines are kept for the AI as well
+  const names = ownNames(S.owner), cvIds = new Set();
+  await pool(CV_QUERIES, 4, async (q) => (await idsFor(q, 6)).forEach((id) => cvIds.add(id)));
+  let cvBudget = 8;
+  for (const id of [...cvIds].sort((a, b) => idTime(b) - idTime(a))) {
+    if (out.cv || cvBudget <= 0) break;
+    const g = await fetchMail(id);
+    for (const p of g ? partsOf(g.payload) : []) {
+      if (out.cv || cvBudget <= 0 || !/\.(pdf|docx)$/i.test(p.filename || "") || !p.body?.attachmentId || p.body.size > 4e6) continue;
+      cvBudget--;
+      try {
+        const bytes = fileBytes((await gget(`${API}/messages/${g.id}/attachments/${p.body.attachmentId}`, READ_UNITS)).data);
+        const text = readable(/\.docx$/i.test(p.filename) ? await docxText(bytes) : await pdfLines(bytes));
+        out.cv_files++;
+        if ((text.match(CV_WORDS) || []).length < 2 || !ownNameIn(text.slice(0, 600), names)) continue;
+        out.cv = { current_since: cvCurrentSince(text), sent: when(id).slice(0, 7) };
+        S.cvLines = $("#ai-ok").checked ? cvLines(text, names) : []; // kept apart from what the engine gets, and only for the AI
+      } catch (e) { out.pdf_failed++; }
+    }
+  }
+
   const dests = {};
   await pool(await idsFor(READ_TOPICS.flights.q, READ_TOPICS.flights.max), 4, async (id) => {
     const g = await fetchMail(id);
@@ -444,20 +621,28 @@ async function registryRows(reg, name, city) {
 
 const ACHIEVEMENT_RX = /אלוף|אלופת|מקום ראשון|זכה ב|זכתה ב|champion|winner/i;
 const SKIP_MENTIONS = /(^|\.)(psakdin|nevo|takdin|lawdata|dinimveod)\.co\.il$|(^|\.)gov\.il$/; // a court page under a shared name would accuse the wrong person
-const NETWORK_LINKS = [
-  ["LinkedIn", /^https:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([A-Za-z0-9%_-]+)\/?$/, (u) => `https://www.linkedin.com/in/${u}`],
-  ["Instagram", /^https:\/\/(?:www\.)?instagram\.com\/([A-Za-z0-9._]+)\/?$/, (u) => `https://www.instagram.com/${u}`],
-  ["Facebook", /^https:\/\/(?:[a-z-]+\.)?facebook\.com\/([A-Za-z0-9.]{5,})\/?$/, (u) => `https://www.facebook.com/${u}`],
-  ["GitHub", /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/?$/, (u) => `https://github.com/${u}`],
-];
 async function webHits(queries) {
   if (!CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return [];
   const r = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ kind: "imtrustme-search", queries }) });
   const reply = await r.json();
   return reply.ok ? reply.results || [] : [];
 }
-async function lookupOutside(city, account) {
-  const out = { licenses: [], companies: [], mentions: [], web_links: {} };
+// A place or a workplace named in a text, also behind a Hebrew prefix ("בחיפה")
+const namesIt = (text, phrase) => {
+  const words = new Set(nameWords(text).flatMap((w) => [w, w.replace(/^[בלמהוש]/, "")]));
+  const want = nameWords(phrase);
+  return want.join("").length >= 3 && want.every((w) => words.has(w));
+};
+// The word an organisation's domain is built on: "example" in mail.example.co.il
+const domainLabel = (domain) => {
+  const labels = String(domain || "").split(".").slice(0, -1);
+  if (labels.length > 1 && /^(co|com|org|net|gov|muni)$/.test(labels[labels.length - 1])) labels.pop();
+  return labels[labels.length - 1] || "";
+};
+// `work` is what the mailbox already showed about where the person works. A page that carries the name together with the
+// city or the workplace is about this person, and not about someone who shares the name
+async function lookupOutside(city, account, work = []) {
+  const out = { licenses: [], companies: [], mentions: [] };
   if (!$("#web-ok").checked) return out;
   const nameHe = S.owner.name_he;
   const nameEn = S.owner.name_en || (/^[A-Za-z][A-Za-z.' -]+ [A-Za-z.' -]+$/.test(account || "") ? account.trim() : null);
@@ -465,7 +650,7 @@ async function lookupOutside(city, account) {
   const [licenses, companies, hits] = await Promise.all([
     Promise.all(REGISTRIES.map((reg) => settle(registryRows(reg, nameHe, city)))),
     settle(registryRows(COMPANY_REGISTRY, nameHe, city)),
-    settle(webHits([`"${nameHe}"`, nameEn && `"${nameEn}"`, `site:linkedin.com/in "${nameEn || nameHe}"`].filter(Boolean))),
+    settle(webHits([`"${nameHe}"`, nameEn && `"${nameEn}"`].filter(Boolean))),
   ]);
   out.licenses = licenses.flat();
   out.companies = companies;
@@ -476,16 +661,14 @@ async function lookupOutside(city, account) {
     seen.add(link);
     if (!hasAllWords(`${h.title} ${h.snippet}`, nameHe) && !(nameEn && hasAllWords(`${h.title} ${h.snippet}`, nameEn))) continue;
     const domain = new URL(link).hostname.replace(/^www\./, "");
-    const net = NETWORK_LINKS.map(([n, rx, make]) => { const m = rx.exec(link.split("?")[0]); return m && [n, make(m[1])]; }).find(Boolean);
-    if (net) {
-      out.web_links[net[0]] ??= net[1];
-      if (net[0] === "LinkedIn") (S.linkedinHits ??= []).push({ url: net[1], text: `${h.title} ${h.snippet}` });
-      continue;
-    }
-    if (/linkedin|facebook|instagram|tiktok|twitter|x\.com/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
-    out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0] });
+    // A profile is never looked up by name: one that shares the name would be someone else's. Profiles come only from
+    // the person's own mail (readRelevant), and where the mail has none, the report has none
+    if (/linkedin|facebook|instagram|tiktok|twitter|x\.com|github/.test(domain) || SKIP_MENTIONS.test(domain)) continue;
+    const about = `${h.title} ${h.snippet}`;
+    const tied = (city && namesIt(about, city) && "city") || (work.some((w) => namesIt(about, w)) && "work") || null;
+    out.mentions.push({ text: `${String(h.title || domain).slice(0, 70)} (${domain})`, url: link.split("#")[0], ...(tied ? { tied } : {}) });
   }
-  const standsOut = (m) => (ACHIEVEMENT_RX.test(m.text) ? 0 : 1);
+  const standsOut = (m) => (m.tied ? 0 : ACHIEVEMENT_RX.test(m.text) ? 1 : 2);
   out.mentions = out.mentions.sort((a, b) => standsOut(a) - standsOut(b)).slice(0, 5);
   return out;
 }
@@ -548,7 +731,7 @@ async function readMailbox() {
   const t0 = performance.now();
   const rows = new Map();
   let reads = 0;
-  const show = () => {
+  let show = () => {
     const left = pending.size;
     stage("read", "now", `${fmtN(total - left)} / ${fmtN(total)}`);
     bar(0.08 + 0.82 * ((total - left) / (total || 1)));
@@ -656,11 +839,17 @@ async function readMailbox() {
   const toOpen = new Set();
   await pool(SIGNAL_QUERIES, 8, async (q) => { (await search(q)).forEach((m) => toOpen.add(m.id)); });
   sentIds.slice(0, 5).forEach((m) => toOpen.add(m.id));
+  // mail from or to another address in the owner's own name: opened, since where that address lives says where they work
+  await pool([S.owner.name_he, S.owner.name_en].filter(Boolean).map((n) => `"${n.replace(/"/g, "")}"`), 2, async (n) => {
+    (await search(`from:${n} -in:sent`)).slice(0, 10).forEach((m) => toOpen.add(m.id));
+    (await search(`in:sent to:${n}`)).slice(0, 10).forEach((m) => toOpen.add(m.id));
+  });
   if ($("#ai-ok").checked) await pool(AI_TOPICS, 4, async (q) => { (await search(q)).slice(0, 25).forEach((m) => toOpen.add(m.id)); });
   await pool([...toOpen], 4, open);
   // The report stands without this: a failure here costs a city, not the run
-  const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0 }; });
-  const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
+  const readOut = await readRelevant(search, pool, drop, { ...orgs, ...senders }).catch((e) => { console.warn("targeted reading stopped", e); return { links: {}, body_reads: 0, pdf_read: 0, pdf_failed: 0, cv_files: 0 }; });
+  const worksAt = [readOut.employer?.name, domainLabel(workAddress(rows.values(), S.owner, own)?.domain)].filter(Boolean);
+  const outside = await lookupOutside(readOut.city?.name || "", [...senderName.entries()].sort((x, y) => y[1] - x[1])[0]?.[0], worksAt).catch((e) => { console.warn("outside lookup stopped", e); return {}; });
 
   // the report: nothing below changes its rows, since every row rests on known companies or on the mail just opened
   stage("read", "done", fmtN(total - pending.size));
@@ -677,36 +866,30 @@ async function readMailbox() {
     return new Promise((res, rej) => {
       S.onEngine = (r, e) => (e ? rej(new Error(e)) : res(r));
       worker.postMessage({ type: "run", payload: { today, owner: S.owner, own_addresses: [profile.emailAddress], rows: out, account_name: account,
-        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut, outside } });
+        sent_checked: sentChecked, mailbox_since, interests, insights, receipt_ids: receiptIds, read_out: readOut, outside,
+        work_address: workAddress(rows.values(), S.owner, own) } });
     }).then((r) => ({ r, counted }));
   };
   const first = await runEngine();
   S.run = { messages: first.counted, listed: total, skipped_promotions: skipped, reads, complete: false, mailbox_since,
             report_seconds: Math.round((performance.now() - t0) / 1000) };
-  Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed });
+  Object.assign(S.run, { body_reads: readOut.body_reads, pdf_read: readOut.pdf_read, pdf_failed: readOut.pdf_failed, cv_files: readOut.cv_files });
   S.result = first.r;
   stage("engine", "done");
-  bar(1);
-  S.aiPending = $("#ai-ok").checked || $("#web-ok").checked;
-  renderReport();
-  go("s-report");
-  showBackground(total - pending.size, total);
+  // The report is shown once, when everything behind it is finished, so nothing changes under the reader's eyes.
+  // Until then this screen stays, with the rest of the work as its own stages
+  show = () => showBackground(total - pending.size, total);
+  show();
+  S.ownerScan = runOwnerScan(after, drop).catch((e) => console.warn("owner scan stopped", e));
   S.enrich = (async () => {
     await lookupEmployer(first.r).catch((e) => console.warn("employer lookup stopped", e));
     await askAi(first.r).catch((e) => console.warn("AI paragraph stopped", e));
-    S.aiPending = false;
     attachEmployer(S.result);
     attachAi(S.result);
-    renderReport();
-    if (S.mode) {
-      S.checkList = [];
-      S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { if (!isPrivate() || p.private) S.checkList.push(`${gi}.${pi}`); }));
-      if (!isPrivate()) renderReview();
-    }
   })();
 
-  // everyone else, behind the report: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail
-  // is left unaccounted for. The final run replaces the report, so nothing is sent from a result that was only partial
+  // everyone else: open one mail, learn the sender, ask for all of theirs. Newest first, until no mail is left
+  // unaccounted for. The final run replaces the first result, so nothing is shown or sent from one that was only partial
   S.scanned = (async () => {
     try {
       const asked = new Set([...known, ...PERSONAL_DOMAINS]);
@@ -724,35 +907,52 @@ async function readMailbox() {
           showBackground(total - pending.size, total);
         }
       });
+      stage("rest", "done", fmtN(total));
+      stage("write", "now");
+      $("#eta").textContent = "עוד רגע";
       const last = await runEngine();
       Object.assign(S.run, { messages: last.counted, reads, complete: true });
       await S.enrich;
+      // a workplace that only the whole mailbox showed is looked up now
+      await lookupEmployer(last.r).catch((e) => console.warn("employer lookup stopped", e));
       applyFinal(last.r);
     } catch (e) {
-      console.warn("background read stopped", e); // the report stands; the feedback says the count is partial
+      console.warn("background read stopped", e); // the first result stands; the feedback says the count is partial
       S.run.reads = reads;
+      await S.enrich;
     }
     S.run.read_seconds = Math.round((performance.now() - t0) / 1000);
+    await S.ownerScan;
+    attachOwner(S.result);
     await revoke();
     rows.clear(); // the envelopes are not kept once the profile exists
     window.onbeforeunload = null;
-    showBackground();
   })();
-  S.background = S.scanned.then(deepenAi); // feedback waits for the scan, not for this
+  // The deeper conclusions are written from the whole mailbox, and only then does the report come up
+  S.background = S.scanned.then(deepenAi).finally(() => {
+    stage("rest", "done");
+    stage("write", "done");
+    bar(1);
+    S.cvLines = []; // the AI has had its say, so the lines are not kept
+    renderReport();
+    go("s-report");
+    const el = $("#bg-status");
+    el.hidden = false;
+    el.textContent = "הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.";
+  });
 }
 
 function showBackground(done, total) {
-  const el = $("#bg-status");
-  el.hidden = false;
-  el.textContent = total === undefined
-    ? `הבדיקה הסתיימה, והגישה ל-Gmail בוטלה.${S.reportChanged ? " הדוח התעדכן לפי כל השולחים, ותשובות על שורות שהשתנו נמחקו. כדאי לעבור עליהן שוב." : ""}`
-    : `ממשיכים לעבור על שאר השולחים (${fmtN(done)} מתוך ${fmtN(total)}). הדוח יכול עוד להתעדכן, ושום דבר לא יישלח לפני שזה נגמר.`;
+  stage("rest", "now", `${fmtN(done)} / ${fmtN(total)}`);
+  bar(0.08 + 0.82 * (done / (total || 1)));
+  $("#eta").textContent = "עוד כמה דקות";
 }
 
 // The final run replaces the report. Answers follow their row by its key, since rows can appear and move, and an answer
 // on a value that has since changed is dropped: it was about something else
 function applyFinal(r) {
   attachEmployer(r);
+  attachOwner(r);
   attachAi(r);
   const index = (res) => {
     const m = new Map();
@@ -830,18 +1030,36 @@ const valHtml = (p) => (p.links ? (p.lead ? `${esc(p.lead)}<br>` : "") + p.links
   ? `<a href="${esc(p.link)}" target="_blank" rel="noopener noreferrer nofollow" dir="ltr">${esc(valText(p))}</a>` : esc(valText(p)));
 const valText = (p) => (p.v === null ? p.why : p.v === 0 ? "0" : String(p.v));
 
-const HERO = ["reply_time", "sent_per_week"];
 // ---------------------------------------------------------------- the workplace
 // Only facts: is it active, since when, and links to its own pages. Whether a company is "stable" would be an opinion
 const dropCompanyWords = (s) => nameWords(s).filter((w) => !["בעמ", "בע", "מ", "ltd", "inc"].includes(w)).join(" ");
-// Several people can share a name, so the page that mentions the workplace is the likelier one
-const bestProfile = (hits, employer) => hits.find((h) => nameWords(employer).every((w) => nameWords(h.text).includes(w)))?.url;
 const AGGREGATORS = /linkedin|facebook|instagram|wikipedia|youtube|tiktok|twitter|x\.com|gov\.il|drushim|alljobs|jobmaster|checkid|dunsguide|bdi|theworker|rocketreach|theorg|maariv|ynet|globes|calcalist|themarker/;
+const DOMAIN_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+const LINKEDIN_COMPANY = /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/;
+const cleanUrl = (u) => String(u || "").split(/[?#]/)[0];
+// A workplace known only by the domain of a work address: its own site says what it is, in its own words
+async function lookupByDomain(domain) {
+  const label = domainLabel(domain);
+  const hits = await webHits([`site:${domain}`, `site:linkedin.com/company "${label}"`]);
+  const hostOf = (h) => { try { return new URL(h.link).hostname.toLowerCase(); } catch { return ""; } };
+  const site = hits.find((h) => /^https:\/\//.test(h.link || "") && (hostOf(h) === domain || hostOf(h).endsWith("." + domain)));
+  const page = hits.find((h) => LINKEDIN_COMPANY.test(cleanUrl(h.link)) && nameWords(label).every((w) => nameWords(h.title).includes(w)));
+  // the name as the organisation writes it: from its LinkedIn page, or as its own site spells the word in its domain
+  const spelled = site && new RegExp(`(?<![\\w-])${label.replace(/[^a-z0-9]/gi, "\\$&")}(?![\\w-])`, "i").exec(`${site.title} ${site.snippet}`)?.[0];
+  const name = (page && String(page.title).split(/\s[|–-]\s/)[0].trim().slice(0, 40)) || spelled || domain;
+  const links = [site && { text: `האתר של ${name}`, url: new URL(site.link).origin }, page && { text: `${name} ב-LinkedIn`, url: cleanUrl(page.link) }].filter(Boolean);
+  if (!links.length) return;
+  // a search result is cut mid-sentence, so only the whole sentences are kept
+  const snippet = String(site?.snippet || "").replace(/\s+/g, " ").slice(0, 180);
+  const whole = snippet.slice(0, snippet.lastIndexOf(". ") > 25 ? snippet.lastIndexOf(". ") : snippet.length).replace(/[\s.…]+$/, "");
+  S.employer = { name, lead: whole, links, snippet: whole, note: "מחיפוש ברשת" };
+}
 async function lookupEmployer(r) {
-  if (!$("#web-ok").checked) return;
+  if (!$("#web-ok").checked || S.employer) return;
   const row = r.groups.flatMap((g) => g.params).find((p) => p.key === "employer");
   if (!row || row.outcome !== "found" || (row.note || "").includes("שולח")) return;
   const name = String(row.v);
+  if (DOMAIN_NAME.test(name)) return lookupByDomain(name);
   const settle = async (p) => { try { return await p; } catch (e) { console.warn("employer lookup failed", e); return []; } };
   const [records, hits] = await Promise.all([
     settle(fetch(`${REGISTRY_API}?resource_id=${COMPANY_REGISTRY.id}&limit=50&q=${encodeURIComponent(name)}`).then((x) => x.json()).then((x) => x.result?.records || [])),
@@ -851,10 +1069,8 @@ async function lookupEmployer(r) {
   const wanted = nameWords(dropCompanyWords(name));
   const matches = records.filter((x) => wanted.length && wanted.every((w) => nameWords(x["שם חברה"]).includes(w)));
   const record = new Set(matches.map((x) => x["מספר חברה"])).size === 1 ? matches[0] : null;
-  S.bestLinkedin = bestProfile(S.linkedinHits || [], name);
   const year = record && /\b(19|20)\d\d\b/.exec(String(record["תאריך התאגדות"]))?.[0];
-  const clean = (u) => String(u || "").split(/[?#]/)[0];
-  const linkedin = hits.map((h) => clean(h.link)).find((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/company\/[^/]+\/?$/.test(u));
+  const linkedin = hits.map((h) => cleanUrl(h.link)).find((u) => LINKEDIN_COMPANY.test(u));
   const site = hits.find((h) => /^https:\/\//.test(h.link || "") && !AGGREGATORS.test(new URL(h.link).hostname) &&
     nameWords(h.title).some((w) => nameWords(name).includes(w)));
   const lead = record ? [`${record["סטטוס חברה"]}`, year && `התאגדה ב-${year}`, record["שם עיר"]].filter(Boolean).join(", ") : "";
@@ -862,18 +1078,28 @@ async function lookupEmployer(r) {
   if (!lead && !links.length) return;
   S.employer = { name, lead, links, snippet: String(site?.snippet || "").slice(0, 180) };
 }
+// Age and marital status, from the participant's own documents and words (owner.js). They are shown in the report,
+// reach the feedback only like any other row, and never go to the AI
+async function runOwnerScan(after, drop) { // the same years as the rest of the reading
+  await new Promise((res, rej) => document.head.append(Object.assign(document.createElement("script"), { src: "owner.js", onload: res, onerror: rej })));
+  await loadPdf();
+  S.ownerFound = await window.ownerScan(S.owner, (url) => gget(url, READ_UNITS), after, drop);
+}
+function attachOwner(r) {
+  const f = S.ownerFound;
+  if (!f || r.groups.some((g) => g.title === "פרטים אישיים")) return;
+  const row = (key, label, v, note) => ({ label, v, n: null, span: "", why: null, note, key, fb_label: label, detail: false, private: false, outcome: "found" });
+  const params = [];
+  if (f.age) params.push(row("owner_age", "גיל", `${f.age.age}${f.age.day ? `, יום הולדת ב-${Number(f.age.day.slice(3))}.${Number(f.age.day.slice(0, 2))}` : ""}`, `שנת לידה ${f.age.born}, לפי ${f.age.docs} מסמכים עם השם המלא`));
+  if (f.family) params.push(row("owner_family", "מצב משפחתי", f.family.status, [f.family.forms ? `${f.family.forms} טפסים` : "", f.family.spouse ? `${f.family.spouse} מיילים שכתבת` : "", f.family.maidenDocs ? "שם נעורים במסמכים" : ""].filter(Boolean).join(" · ")));
+  if (f.kids) params.push(row("owner_kids", "ילדים", "כנראה יש", `מ-${f.kids.words} מיילים שכתבת${f.kids.years.length ? `, ובמסמכים שורות לידה משנים ${f.kids.years.join(", ")}` : ""}`));
+  if (params.length) r.groups.push({ title: "פרטים אישיים", params });
+}
 function attachEmployer(r) {
-  const profileRow = r.groups.flatMap((g) => g.params).find((p) => p.key === "platform_linkedin");
-  if (S.bestLinkedin && profileRow?.note?.includes("מישהו אחר")) {
-    profileRow.link = S.bestLinkedin;
-    profileRow.v = S.bestLinkedin.split("//")[1].replace(/^www\./, "");
-    const item = (r.portrait || []).find((x) => x.label === "LinkedIn");
-    if (item) item.url = S.bestLinkedin;
-  }
   if (!S.employer || r.groups.some((g) => g.title === "מקום העבודה")) return;
-  const { name, lead, links } = S.employer;
+  const { name, lead, links, note } = S.employer;
   r.groups.push({ title: "מקום העבודה", params: [{ label: `על ${name}`, v: [lead, ...links.map((l) => l.url)].filter(Boolean).join(" · "), lead, links, n: null, span: "", why: null,
-    note: "מרשם החברות ומחיפוש ברשת", key: "employer_about", fb_label: "על מקום העבודה", detail: false, private: false, outcome: "found" }] });
+    note: note || "מרשם החברות ומחיפוש ברשת", key: "employer_about", fb_label: "על מקום העבודה", detail: false, private: false, outcome: "found" }] });
 }
 
 // ---------------------------------------------------------------- the AI paragraph
@@ -891,13 +1117,15 @@ const AI_TOPICS = [
   'subject:(התנדבות OR מילואים OR הרצאה OR כנס OR conference)',
   'in:sent subject:(חוזה OR הסכם OR משכנתא OR "מעבר דירה" OR ביטוח)',
 ];
-const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה";
+const AI_GROUP = "מה AI הבין מהנושאים", AI_SUMMARY = "בקצרה", FACTS_TOPIC = "עובדות", CV_ROW = "קורות חיים ששלחת";
 const AI_BLOCKED = /דקדקן|יסודי|אמין|אחראי|מומלץ|ציון|סיכון|משכיר|שוכר|שכירות|שכר דירה/;
 async function askAi(r, deep = false) {
   if (!$("#ai-ok").checked || !r.ai_input?.length || !CFG.sendUrl || CFG.sendUrl.startsWith("PASTE")) return;
   // Facts from the report come first, so a sentence built on one can be taken down when its row is blacked out
   const facts = (r.ai_facts || []).map((x) => ({ label: x.label, line: ["", "עובדה מהדוח", x.text.slice(0, 190)] }));
   if (S.employer?.snippet) facts.push({ label: null, line: ["", "על מקום העבודה", `${S.employer.name}: ${S.employer.snippet}`.slice(0, 190)] });
+  // the person's own words about their work and studies. Tied to the CV row, so blacking it out takes these conclusions too
+  (S.cvLines || []).forEach((l) => facts.push({ label: CV_ROW, line: ["", "עובדה מהדוח", `מתוך קורות חיים: ${l}`.slice(0, 190)] }));
   const items = [...facts.map((x) => x.line), ...r.ai_input.map((x) => [x.d, x.o, x.s])];
   const reply = await fetch(CFG.sendUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, signal: AbortSignal.timeout(deep ? 300000 : 90000),
     body: JSON.stringify({ kind: "imtrustme-ai", items, ...(deep ? { deep: true } : {}) }) }).then((x) => x.json());
@@ -958,7 +1186,16 @@ function summaryLines() {
   const summary = visibleRows(AI_SUMMARY).map((p) => ({ topic: p.label, text: p.v }));
   const employer = rowsOf("מקום העבודה")[0];
   if (employer && !isHidden(employer.id) && employer.p.lead) summary.push({ topic: "עבודה", text: `${S.employer.name}: ${employer.p.lead}.` });
+  if (summary.length) summary.unshift(...factLines());
   return summary;
+}
+// The fixed facts are the engine's, one to a line, and open the summary whoever wrote the rest of it.
+// A line goes down with any row it rests on
+function factLines() {
+  const ids = {};
+  S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
+  return (S.result.portrait || []).filter((x) => x.topic === FACTS_TOPIC && ![x.label, ...(x.needs || [])].some((l) => isHidden(ids[l])))
+    .map((x) => ({ topic: x.topic, text: x.text }));
 }
 
 // The paragraph follows the rows: a row blacked out takes its sentence with it, so nothing can go out through here
@@ -967,7 +1204,7 @@ function portraitLines(mainOnly) {
   S.result.groups.forEach((g, gi) => g.params.forEach((p, pi) => { ids[p.label] = `${gi}.${pi}`; }));
   const topics = new Map();
   for (const x of S.result.portrait || []) {
-    if (isHidden(ids[x.label]) || (mainOnly && !x.main)) continue;
+    if ([x.label, ...(x.needs || [])].some((l) => isHidden(ids[l])) || (mainOnly && !x.main)) continue;
     if (!topics.has(x.topic)) topics.set(x.topic, { plain: [], lists: new Map() });
     const t = topics.get(x.topic);
     if (!x.join) t.plain.push(x.text);
@@ -977,13 +1214,13 @@ function portraitLines(mainOnly) {
 }
 const portraitText = () => portraitLines().map((l) => l.text).join(" ");
 function showPortrait(card) {
-  const summary = summaryLines(), lines = summary.length ? summary : portraitLines(true), links = topLinks();
+  const summary = summaryLines(), links = topLinks();
+  const lines = summary.length ? summary : [...factLines(), ...portraitLines(true).filter((l) => l.topic !== FACTS_TOPIC)];
   // One section: each topic once, with its points under it
   const topics = new Map();
   lines.forEach((l) => { if (!topics.has(l.topic)) topics.set(l.topic, []); topics.get(l.topic).push(l.text); });
-  const wait = S.aiPending ? `<p class="portrait-wait">עוד רגע: כותבים מסקנות ומחפשים קישורים…</p>` : "";
-  $(`${card}`).hidden = !lines.length && !wait;
-  $(`${card} .portrait-top`).innerHTML = wait + [...topics].map(([topic, texts]) => `<div class="p-line"><span>${esc(topic)}</span><div>${texts.map((t) => `<p>${esc(t)}</p>`).join("")}</div></div>`).join("");
+  $(`${card}`).hidden = !lines.length;
+  $(`${card} .portrait-top`).innerHTML = [...topics].map(([topic, texts]) => `<div class="p-line"><span>${esc(topic)}</span><div>${texts.map((t) => `<p>${esc(t)}</p>`).join("")}</div></div>`).join("");
   $(`${card} .portrait-links`).innerHTML = links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.text)}</a>`).join("");
 }
 function renderReport() {
@@ -996,11 +1233,6 @@ function renderReport() {
   const range = r.stats.date_range;
   $("#rep-meta").innerHTML = [["הופק", d], ["תקופה", range ? `<bdi dir="ltr">${esc(ymOf(range[0]))} – ${esc(ymOf(range[1]))}</bdi>` : "—"],
     ["מיילים בתקופה", fmtN(S.run.listed)]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
-  // The part people came for: the numbers about themselves, before the detail
-  const byKey = Object.fromEntries(r.groups.flatMap((g) => g.params).map((p) => [p.key, p]));
-  const tiles = HERO.map((k) => byKey[k]).filter((p) => p && p.outcome === "found");
-  $("#rep-hero").hidden = !tiles.length;
-  $("#hero-tiles").innerHTML = tiles.map((p) => `<div class="tile"><b>${esc(valText(p))}</b><span>${esc(p.label)}</span></div>`).join("");
   $("#rep-groups").innerHTML = r.groups.map((g) => `
     <div class="card group"><h2>${esc(g.title)}</h2>${g.params.map((p) => `<div class="row">
         <div class="lab">${esc(p.label)}</div>

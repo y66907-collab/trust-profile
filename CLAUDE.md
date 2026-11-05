@@ -8,7 +8,7 @@ Code, identifiers, commit messages and code comments stay in English.
 ## Non-negotiable product rules (keep them)
 1. **Nothing leaves the browser without the person's choice.** Feedback is sent only on their click, and a redacted value is never sent.
 2. **Verification, not scoring.** No AI/trust score and no opinions about the person.
-3. **Never store** protected attributes, biometrics, exact salary, or a street address.
+3. **Never store** biometrics, exact salary, or a street address. Exception, decided by Yudit on 2026-11-05: age and marital status are read for every participant (`site/owner.js`), shown in their report, and reach the feedback like any other row. They never go to the AI.
 4. **Missing data is never penalised.**
 5. **Participants are blind.** The page never reveals the purpose. `pilot/test/e2e.js` fails if a revealing word reaches it.
 
